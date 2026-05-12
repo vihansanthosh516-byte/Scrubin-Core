@@ -1,0 +1,41 @@
+name: ScrubIn Phase 16 CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  phase16_validation:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup environment
+        run: |
+          export PYTHONPATH=.
+
+      # Gate 1 — Policy Fingerprint Integrity
+      - name: Policy Fingerprint Gate
+        run: PYTHONPATH=. python ci/gates/policy_fingerprint_gate.py
+
+      # Gate 2 — System Lock Consistency
+      - name: System Lock Gate
+        run: PYTHONPATH=. python ci/gates/system_lock_gate.py
+
+      # Gate 3 — Deterministic Replay Identity
+      - name: Replay Determinism Gate
+        run: PYTHONPATH=. python ci/gates/replay_determinism_gate.py
+
+      # Gate 4 — Counterfactual Stability
+      - name: Counterfactual Stability Gate
+        run: PYTHONPATH=. python ci/gates/counterfactual_stability_gate.py
+
+      # Gate 5 — External API Isolation
+      - name: External API Safety Gate
+        run: PYTHONPATH=. python ci/gates/api_isolation_gate.py
