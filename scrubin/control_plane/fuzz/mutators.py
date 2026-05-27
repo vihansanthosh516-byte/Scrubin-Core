@@ -37,32 +37,32 @@ class NoiseMutator(BaseMutator):
         for ev in mutated:
             # Determine topic (attribute or dict key)
             topic = getattr(ev, "topic", None)
-+            if topic is None and isinstance(ev, dict):
-+                topic = ev.get("topic")
-+            if topic != "patient.vitals":
-+                continue
-+            # Access payload (attribute or dict key)
-+            payload = getattr(ev, "payload", None)
-+            if payload is None and isinstance(ev, dict):
-+                payload = ev.get("payload", {})
-+            if not isinstance(payload, dict):
-+                continue
-+            # Apply perturbations
-+            if "hr" in payload:
-+                payload["hr"] = payload.get("hr", 0) + random.randint(-2, 2)
-+            if "spo2" in payload:
-+                payload["spo2"] = payload.get("spo2", 0) + random.randint(-1, 1)
-+            # If ev is a dict, write back mutated payload
-+            if isinstance(ev, dict):
-+                ev["payload"] = payload
-+            else:
-+                # For frozen dataclasses this would be a mutation error; however
-+                # ``SemanticEvent`` is frozen, so we cannot modify it in‑place.
-+                # Instead we replace the object with a shallow copy that has the
-+                # updated payload using ``replace`` from ``dataclasses``.
-+                from dataclasses import replace
-+                ev = replace(ev, payload=payload)
-+        return mutated
+            if topic is None and isinstance(ev, dict):
+                topic = ev.get("topic")
+            if topic != "patient.vitals":
+                continue
+            # Access payload (attribute or dict key)
+            payload = getattr(ev, "payload", None)
+            if payload is None and isinstance(ev, dict):
+                payload = ev.get("payload", {})
+            if not isinstance(payload, dict):
+                continue
+            # Apply perturbations
+            if "hr" in payload:
+                payload["hr"] = payload.get("hr", 0) + random.randint(-2, 2)
+            if "spo2" in payload:
+                payload["spo2"] = payload.get("spo2", 0) + random.randint(-1, 1)
+            # If ev is a dict, write back mutated payload
+            if isinstance(ev, dict):
+                ev["payload"] = payload
+            else:
+                # For frozen dataclasses this would be a mutation error; however
+                # ``SemanticEvent`` is frozen, so we cannot modify it in‑place.
+                # Instead we replace the object with a shallow copy that has the
+                # updated payload using ``replace`` from ``dataclasses``.
+                from dataclasses import replace
+                ev = replace(ev, payload=payload)
+        return mutated
 
 class DelayMutator(BaseMutator):
     def mutate(self, events: List[Any], seed: int) -> List[Any]:
