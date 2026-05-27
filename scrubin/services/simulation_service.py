@@ -1,4 +1,5 @@
 import uuid
+import asyncio
 import random
 
 from scrubin.core.orchestrator import Orchestrator
@@ -54,10 +55,13 @@ class SimulationService:
         self._wire_decision(self.orchestrator)
         
         self.orchestrator.setup()
+        self.event_queue = asyncio.Queue()
 
-    def tick_session(self, steps: int = 1):
-        for _ in range(steps):
-            self.orchestrator.tick()
+def tick_session(self, steps: int = 1):
+    for _ in range(steps):
+        self.orchestrator.tick()
+    # Emit updated state after ticking
+    self._push_snapshot_event()
 
     def apply_decision(self, option_id: str, target: str = "") -> dict:
         if self.mode != "interactive":
@@ -67,6 +71,8 @@ class SimulationService:
         if self.orchestrator.authority.execution_log:
             last = self.orchestrator.authority.execution_log[-1]
             intent_id = last.intent_id
+        # Emit updated state snapshot after applying decision
+        self._push_snapshot_event()
         return {
             "executed": result.get("executed", False),
             "action": result.get("action", ""),
@@ -110,6 +116,14 @@ class SimulationService:
 
     def current_tick(self) -> int:
         return self.state_proj.current_tick
+
+    def _push_snapshot_event(self):
+        """Enqueue a state_snapshot event for WebSocket listeners."""
+        try:
+            snapshot = self.get_summary()
+            self.event_queue.put_nowait({"type": "state_snapshot", "summary": snapshot})
+        except Exception as e:
+            print(f"[SimulationService] Failed to enqueue state_snapshot: {e}")
 
     def _wire_vitals(self, orch, profile, patient_profile):
         from scrubin.tester.runner import _ProfiledVitalsAgent

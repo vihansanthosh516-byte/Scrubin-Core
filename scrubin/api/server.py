@@ -3,6 +3,7 @@ import json
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -14,6 +15,8 @@ from scrubin.tester.profiles.registry import PROFILES
 
 
 app = FastAPI(title="ScrubIn API", version="0.3.0")
+
+
 manager = SessionManager()
 
 app.add_middleware(
@@ -252,61 +255,14 @@ async def session_websocket(websocket: WebSocket, session_id: str):
         await websocket.close()
         return
 
-    last_sequence = -1
-    await websocket.send_json({
-        "type": "state_snapshot",
-        "summary": session.get_summary(),
-    })
+    # Send current state snapshot on connect
+    session.event_queue.put_nowait({"type": "state_snapshot", "summary": session.get_summary()})
 
     try:
         while True:
-            raw = await websocket.receive_text()
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                await websocket.send_json({"type": "error", "message": "invalid json"})
-                continue
-
-            command = msg.get("command", "")
-            data = msg.get("data", {})
-
-            if command == "tick":
-                steps = data.get("steps", 1)
-                session.tick_session(steps)
-                new_events = session.get_events_since(last_sequence)
-                for evt in new_events:
-                    await websocket.send_json({"type": "event", "event": evt})
-                    last_sequence = evt["sequence"]
-                await websocket.send_json({
-                    "type": "state_snapshot",
-                    "summary": session.get_summary(),
-                })
-
-            elif command == "decide":
-                option_id = data.get("option_id", "")
-                target = data.get("target", "")
-                result = session.apply_decision(option_id, target)
-                new_events = session.get_events_since(last_sequence)
-                for evt in new_events:
-                    await websocket.send_json({"type": "event", "event": evt})
-                    last_sequence = evt["sequence"]
-                await websocket.send_json({
-                    "type": "decision_result",
-                    "result": result,
-                    "summary": session.get_summary(),
-                })
-
-            elif command == "ping":
-                await websocket.send_json({"type": "pong"})
-
-            elif command == "subscribe":
-                pass
-
-            else:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": f"unknown command: {command}",
-                })
-
+            # Wait for next event from the session
+            event = await session.event_queue.get()
+            await websocket.send_json(event)
     except WebSocketDisconnect:
+        # No registry cleanup required
         pass
