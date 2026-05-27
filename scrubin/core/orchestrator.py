@@ -17,6 +17,11 @@ from scrubin.perf.budgets import PerformanceBudgets
 from scrubin.perf.metrics import PerformanceMetrics, TickMetrics
 
 
+from scrubin.control_plane.analysis.equilibrium import EquilibriumAnalyzer
+from scrubin.control_plane.analysis.attractor import AttractorClassifier
+from scrubin.control_plane.control.adversarial_controller import AdversarialController, ControlSignal
+
+
 class Orchestrator:
     def __init__(self, seed=0, config: ConfigLayer = None, active_profile: str = "default",
                  decision_engine=None, decision_validator=None,
@@ -43,6 +48,13 @@ class Orchestrator:
         )
         self.bus.set_authority_token(self.authority.authority_token)
         self.world = SimulationWorld()
+        # Equilibrium analysis, attractor classification, and adaptive controller
+        self.equilibrium_analyzer = EquilibriumAnalyzer()
+        self.attractor_classifier = AttractorClassifier()
+        self.adversarial_controller = AdversarialController()
+        self._control_signal = ControlSignal()
+        self._adversary_scale = 1.0
+        self._world_history = []  # list of world snapshots for analysis
         self.projections = []
         self._pending_signals: list[dict] = []
         self.invariant_validator = invariant_validator or InvariantValidator(ledger=self.ledger)
@@ -119,6 +131,16 @@ class Orchestrator:
         self._evolve_world()
         self.profiler.end_phase("evolve")
 
+        # Record world snapshot for analysis
+        self._world_history.append(self.world.to_dict())
+
+        # Equilibrium analysis
+        metrics = self.equilibrium_analyzer.compute_metrics(self._world_history)
+        regime = self.attractor_classifier.classify(metrics)
+        self._control_signal = self.adversarial_controller.compute_control(metrics, regime)
+
+        # Apply control adjustments to world state
+        self._apply_control()
         decision_output = None
         if self.decision_engine is not None:
             from scrubin.decision.engine import DecisionEngine as _DE
@@ -229,6 +251,23 @@ class Orchestrator:
         for res_name, res in self.world.resource_manager.resources.items():
             if res.available == 0:
                 self.bus.publish("resource_exhaustion", {"resource": res_name, "tick": self.tick_count})
+        
+    def _apply_control(self):
+        """Apply the latest control signal to the world state.
+
+        Simple deterministic adjustments affect mortality risk and vitals.
+        """
+        cs = self._control_signal
+        # Adjust mortality risk as a proxy for overall stability
+        self.world.mortality_risk = max(0.0, self.world.mortality_risk + cs.stability_bias)
+        self.world.mortality_risk *= (1.0 - cs.damping_factor)
+        # Exploration boost adds a dummy "exploration" vital
+        if cs.exploration_boost:
+            self.world.physiology.vitals["exploration"] = (
+                self.world.physiology.vitals.get("exploration", 0.0) + cs.exploration_boost
+            )
+        # Store adversary pressure scaling for potential downstream use
+        self._adversary_scale = cs.adversary_scale
 
     def _generate_and_execute_intent(self) -> ActionIntent | None:
         if not self._pending_signals:
