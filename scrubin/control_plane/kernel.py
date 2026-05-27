@@ -28,6 +28,9 @@ from scrubin.control_plane.semantic_events.models import SemanticEvent
 from scrubin.control_plane.causal_graph.engine import CausalExecutionGraph
 from scrubin.control_plane.causal_graph.linker import CausalLinker
 from scrubin.control_plane.replay.executor import ReplayExecutor
+from scrubin.control_plane.p8.isolation_engine import IsolationEngine
+from scrubin.control_plane.p8.run_manager import RunManager
+from scrubin.control_plane.p8.dummy_kernel import DummyKernel
 
 class ControlPlaneKernel:
     """
@@ -86,8 +89,11 @@ class ControlPlaneKernel:
         
         # Phase 12.4 Distributed Runtime
         self.dist_adapter = DistributedKernelAdapter(self.bridge)
+        self.p8_engine = IsolationEngine(kernel_cls=DummyKernel)
+        self.run_manager = RunManager(self.p8_engine)
         
         self.execution_plans: Dict[str, ExecutionPlan] = {}
+        self._ensure_p8_isolation()
 
     def _register_default_event_schemas(self):
         self.schema_registry.register(EventSchema(
@@ -250,3 +256,16 @@ class ControlPlaneKernel:
                 
             return job
         return None
+
+    def _ensure_p8_isolation(self):
+        """Guard that P8 components are correctly initialised."""
+        assert hasattr(self, "run_manager") and self.run_manager is not None, "RunManager not initialised"
+        assert hasattr(self, "p8_engine") and self.p8_engine is not None, "IsolationEngine not initialised"
+
+    def run_simulation(self, config: dict):
+        """Submit isolated execution run via P8 run manager."""
+        return self.run_manager.submit(config)
+
+    def get_run(self, run_id: str):
+        """Retrieve stored execution artifact by run ID."""
+        return self.run_manager.get(run_id)
