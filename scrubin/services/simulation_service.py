@@ -124,7 +124,11 @@ class SimulationService:
         summary["phase"] = None
         # Pending decision placeholder – includes an ID derived from the current tick
         pending_id = f"decision_{self.state_proj.current_tick}" if hasattr(self.state_proj, "current_tick") else f"decision_{self.orchestrator.tick_count}"
-        summary["pendingDecision"] = {"id": pending_id, "phase": self.state_proj.current_tick if hasattr(self.state_proj, "current_tick") else None}
+        summary["pendingDecision"] = {
+        "id": pending_id,
+        "phase": self.state_proj.current_tick if hasattr(self.state_proj, "current_tick") else None,
+        "options": self.get_options(),
+    }
         return summary
 
     def current_tick(self) -> int:
