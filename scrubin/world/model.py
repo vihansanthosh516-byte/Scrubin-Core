@@ -160,6 +160,24 @@ class SimulationWorld:
                 observable.append(ClinicalFinding.from_dict(f))
             else:
                 observable.append(f)
+        # Reconstruct diagnostic queue if present
+        dq_data = d.get("diagnostic_queue")
+        if isinstance(dq_data, dict):
+            from scrubin.diagnostics.queues import DiagnosticQueue, DiagnosticTask
+            dq = DiagnosticQueue()
+            for task_dict in dq_data.get("pending", []):
+                dq.pending_tasks.append(DiagnosticTask(**task_dict))
+            for task_dict in dq_data.get("completed", []):
+                dq.completed_tasks.append(DiagnosticTask(**task_dict))
+            # Update internal counter based on task IDs if possible
+            try:
+                max_id = max(int(t.id.split("-")[1]) for t in dq.pending_tasks + dq.completed_tasks)
+                dq._task_counter = max_id
+            except Exception:
+                dq._task_counter = 0
+        else:
+            dq = None
+
         return cls(
             tick=d.get("tick", 0),
             hidden_state=hidden,
@@ -170,7 +188,7 @@ class SimulationWorld:
             forecast_state=ForecastState.from_dict(d.get("forecast_state", {})),
             resource_manager=ResourceManager.from_dict(d.get("resource_manager", {})),
             observed_vitals=d.get("observed_vitals", {}),
-            diagnostic_queue=d.get("diagnostic_queue"), # Simplified
+            diagnostic_queue=dq,
             mortality_risk=d.get("mortality_risk", 0.0),
             instability_index=d.get("instability_index", 0.0),
             sofa_score=d.get("sofa_score", 0),

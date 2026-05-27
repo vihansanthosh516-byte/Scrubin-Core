@@ -5,6 +5,6 @@
 from .p6_kernel import P6Kernel
 
 # Alias used by Phase‑6 tests
-from .p6_kernel import P6Kernel as ExecutionKernel
+from .execution_kernel import ExecutionKernel
 
 

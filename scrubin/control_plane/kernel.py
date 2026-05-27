@@ -102,6 +102,17 @@ class ControlPlaneKernel:
         ))
 
     def _ingest_to_semantic_history(self, event: Any):
+        # Support both StreamEvent objects and plain dict events used in tests
+        if isinstance(event, dict):
+            # Map test dict structure to expected attributes
+            # Expected keys: "action" -> topic, "params" -> payload, optional "tick" and "session_id"
+            from types import SimpleNamespace
+            topic = event.get("action", "generic")
+            tick = event.get("tick")
+            payload = event.get("params", {})
+            session_id = event.get("session_id")
+            event = SimpleNamespace(topic=topic, tick=tick, payload=payload, session_id=session_id)
+
         """
         Converts raw StreamEvents into structured SemanticEvents for long-term intelligence.
         """
