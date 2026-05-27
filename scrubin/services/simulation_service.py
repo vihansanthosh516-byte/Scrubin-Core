@@ -57,11 +57,11 @@ class SimulationService:
         self.orchestrator.setup()
         self.event_queue = asyncio.Queue()
 
-def tick_session(self, steps: int = 1):
-    for _ in range(steps):
-        self.orchestrator.tick()
-    # Emit updated state after ticking
-    self._push_snapshot_event()
+    def tick_session(self, steps: int = 1):
+        for _ in range(steps):
+            self.orchestrator.tick()
+        # Emit updated state after ticking
+        self._push_snapshot_event()
 
     def apply_decision(self, option_id: str, target: str = "") -> dict:
         if self.mode != "interactive":
@@ -112,7 +112,20 @@ def tick_session(self, steps: int = 1):
             mode=state_snap["mode"],
             options=self.get_options(),
         )
-        return snap.to_dict()
+        summary = snap.to_dict()
+        # UI expects additional fields beyond the snapshot DTO
+        # Current decision index – number of executed decisions so far
+        try:
+            decision_idx = len(self.orchestrator.authority.execution_log)
+        except Exception:
+            decision_idx = 0
+        summary["current_decision_idx"] = decision_idx
+        # Phase information – not currently tracked, set to None for now
+        summary["phase"] = None
+        # Pending decision placeholder – includes an ID derived from the current tick
+        pending_id = f"decision_{self.state_proj.current_tick}" if hasattr(self.state_proj, "current_tick") else f"decision_{self.orchestrator.tick_count}"
+        summary["pendingDecision"] = {"id": pending_id, "phase": self.state_proj.current_tick if hasattr(self.state_proj, "current_tick") else None}
+        return summary
 
     def current_tick(self) -> int:
         return self.state_proj.current_tick
