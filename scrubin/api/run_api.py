@@ -10,6 +10,14 @@ app = FastAPI(title="ScrubIn Kernel API", version="0.1.0")
 # For the purposes of the API we don't need a real core interface, so we pass None.
 kernel = ControlPlaneKernel(core_interface=None)
 
+# ---------------------------------------------------------------------------
+# Visualization utilities
+# ---------------------------------------------------------------------------
+from scrubin.visualization import VisualizationService
+
+# Create a single shared service instance.
+viz_service = VisualizationService(kernel)
+
 
 @app.post("/run")
 def run_simulation(config: dict):
@@ -61,3 +69,16 @@ def trace(run_id: str):
     # In a full implementation this would pull trace information from the
     # ControlPlaneTracer or a dedicated tracing store.
     return {"trace": []}
+
+
+@app.get("/view/{run_id}")
+def view_run(run_id: str):
+    """Return a visualization‑ready view of the run.
+
+    The response bundles the raw run data, a simple phase‑space extraction and
+    any adversarial anomalies detected in the trajectory.
+    """
+    try:
+        return viz_service.get_view(run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
