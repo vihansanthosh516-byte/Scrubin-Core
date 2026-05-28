@@ -1,0 +1,59 @@
+{
+  "id": "appendectomy",
+  "name": "Laparoscopic Appendectomy",
+  "specialty": "General Surgery",
+  "difficulty": "intermediate",
+  "estimated_duration": 45,
+  "summary": "Laparoscopic removal of the appendix with minimal invasiveness.",
+  "goals": [
+    "identify appendix",
+    "avoid bowel perforation",
+    "control bleeding"
+  ],
+  "phases": [
+    {
+      "name": "entry",
+      "objective": "Gain safe access to the surgical field",
+      "instructions": ["Establish incision site", "Avoid major vessels"],
+      "success_criteria": ["Access confirmed without complication"],
+      "risk_flags": ["Organ puncture", "Bleeding"]
+    },
+    {
+      "name": "visualization",
+      "objective": "Identify anatomical landmarks",
+      "instructions": ["Locate appendix", "Visualise surrounding tissue"],
+      "success_criteria": ["Appendix clearly visible"],
+      "risk_flags": []
+    },
+    {
+      "name": "dissection",
+      "objective": "Separate appendix safely",
+      "instructions": ["Clip mesoappendix", "Cut appendix base"],
+      "success_criteria": ["No inadvertent tissue damage"],
+      "risk_flags": ["Bleeding", "Organ injury"]
+    },
+    {
+      "name": "removal",
+      "objective": "Extract the appendix",
+      "instructions": ["Retrieve appendix", "Place in retrieval bag"],
+      "success_criteria": ["Appendix removed intact"],
+      "risk_flags": []
+    },
+    {
+      "name": "closure",
+      "objective": "Close incision safely",
+      "instructions": ["Suture layers", "Apply dressing"],
+      "success_criteria": ["No leakage", "Stable wound"],
+      "risk_flags": ["Infection"]
+    }
+  ],
+  "failure_conditions": [
+    "major bleed",
+    "organ injury",
+    "time exceeded"
+  ],
+  "success_metrics": {
+    "precision": 0.95,
+    "blood_loss": 20
+  }
+}
