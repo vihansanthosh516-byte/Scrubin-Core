@@ -16,6 +16,8 @@ from scrubin.projections.event import EventProjection
 from scrubin.projections.decision import DecisionProjection
 from scrubin.api.mappers import map_option_to_dto, StateSnapshotDTO
 from scrubin.models.intents import ActionIntent
+from scrubin.engine.procedure import ProcedurePhase
+from scrubin.engine.procedural_phase_engine import ProceduralPhaseEngine
 
 class SimulationService:
     def __init__(self, session_id: str, seed: int, profile_name: str, patient_profile_id: str, mode: str):
@@ -58,9 +60,14 @@ class SimulationService:
         self.orchestrator.setup()
         # Load a default procedure definition (appendectomy) for interactive sessions
         from scrubin.procedures.registry import get_procedure
+
         try:
             self.procedure = get_procedure("appendectomy")
             self._procedure_phases = self.procedure.get("phases", [])
+            # Convert raw phase dictionaries into typed ProcedurePhase objects for richer handling
+            self._procedure_phase_objs = [ProcedurePhase.from_dict(p) for p in self._procedure_phases]
+        # Initialise the deterministic procedural phase engine with the typed phases.
+        self.procedural_phase_engine = ProceduralPhaseEngine({p.id: p for p in self._procedure_phase_objs})
             print(f"[PROCEDURE] Loaded procedure '{self.procedure.get('id')}' with {len(self._procedure_phases)} phases")
         except FileNotFoundError:
             self.procedure = None
@@ -171,9 +178,14 @@ class SimulationService:
             return []
         # Determine phase based on current tick. Simple mapping: each tick advances to next phase until the last.
         tick = self.state_proj.current_tick if hasattr(self.state_proj, "current_tick") else 0
-        phase_idx = min(tick, len(self._procedure_phases) - 1)
-        phase = self._procedure_phases[phase_idx]
-        instructions = phase.get("instructions", [])
+        # Determine the current procedure phase using the typed objects if available
+        if getattr(self, "_procedure_phase_objs", None):
+            phase_idx = min(tick, len(self._procedure_phase_objs) - 1)
+            phase_obj = self._procedure_phase_objs[phase_idx]
+            instructions = phase_obj.required_decisions
+        else:
+            phase_idx = 0
+            instructions = []
         opts = []
         for instr in instructions:
             opt_id = instr.lower().replace(" ", "_")
@@ -186,7 +198,7 @@ class SimulationService:
                 "target_complication": "",
             })
         if opts:
-            print(f"[PROCEDURE] Generated {len(opts)} options for phase '{phase.get('name')}' (index {phase_idx})")
+            print(f"[PROCEDURE] Generated {len(opts)} options for phase '{phase_obj.title if hasattr(self, '_procedure_phase_objs') else 'unknown'}' (index {phase_idx})")
         return opts
 
     def get_options(self) -> list[dict]:
