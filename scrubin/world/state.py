@@ -13,11 +13,28 @@ from typing import Tuple, List, Any
 
 from scrubin.models.types import Vitals, VitalDelta, ComplicationState
 from scrubin.cognition.state import CognitiveState
+from scrubin.cognition.intentive_state import IntentiveCognitionState
+from scrubin.core.events import TimelineEvent
 from scrubin.agents.state import OperativeActor
 from scrubin.ontology.active_graph import ActiveSemanticGraph
+from scrubin.execution.state import TechnicalExecutionState
+from scrubin.execution.skill_model import OperatorSkillProfile
+from scrubin.adaptive.competency import OperatorCompetencyProfile
+from scrubin.adaptive.difficulty_engine import DifficultyProfile
+from scrubin.adaptive.tutoring_engine import TutoringState
+from scrubin.adaptive.curriculum_engine import AdaptiveCurriculum
+from scrubin.adaptive.analytics_engine import PerformanceAnalytics
 from scrubin.cognition.procedural_memory import ProceduralMemory
+from scrubin.environment.state import OperativeEnvironmentState
+from scrubin.memory.consequence_memory import ConsequenceMemory
 from scrubin.anatomy.state import AnatomicalState
 from scrubin.biology.state import SystemsBiologyState
+from scrubin.ontology.intent_graph import IntentGraph
+from scrubin.ontology.attention_state import AttentionState
+from scrubin.ontology.overload_state import OverloadState
+from scrubin.ontology.intent_schedule import IntentSchedule
+from scrubin.ontology.memory_compression import EpisodicMemory
+from scrubin.ontology.recovery_state import RecoveryState
 
 # ---------------------------------------------------------------------------
 # Sub‑state definitions
@@ -190,13 +207,7 @@ class ScoringState:
         return replace(self, **updates)
 
 
-@dataclass(frozen=True)
-class TimelineEvent:
-    tick: int
-    description: str
-
-    def with_tick(self, tick: int) -> "TimelineEvent":
-        return replace(self, tick=tick)
+# TimelineEvent moved to scrubin.core.events
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +235,21 @@ class WorldState:
     scoring: ScoringState = field(default_factory=ScoringState)
     timeline: Tuple[TimelineEvent, ...] = field(default_factory=tuple)
     active_semantic_graph: ActiveSemanticGraph = field(default_factory=ActiveSemanticGraph)
+    intent_graph: IntentGraph = field(default_factory=IntentGraph)
+    intentive_cognition_state: IntentiveCognitionState = field(default_factory=IntentiveCognitionState)
+    attention_state: AttentionState = field(default_factory=AttentionState)
+    intent_schedule: IntentSchedule = field(default_factory=IntentSchedule)
+    overload_state: OverloadState = field(default_factory=OverloadState)
+    episodic_memory: EpisodicMemory = field(default_factory=EpisodicMemory)
+    recovery_state: RecoveryState = field(default_factory=RecoveryState)
     actors: Tuple["OperativeActor", ...] = field(default_factory=tuple)
+    technical_execution_state: TechnicalExecutionState = field(default_factory=TechnicalExecutionState)
+    operator_skill_profile: OperatorSkillProfile = field(default_factory=OperatorSkillProfile)
+    operator_competency_profile: OperatorCompetencyProfile = field(default_factory=OperatorCompetencyProfile)
+    difficulty_profile: DifficultyProfile = field(default_factory=DifficultyProfile)
+    tutoring_state: TutoringState = field(default_factory=TutoringState)
+    adaptive_curriculum: AdaptiveCurriculum = field(default_factory=AdaptiveCurriculum)
+    performance_analytics: PerformanceAnalytics = field(default_factory=PerformanceAnalytics)
 
     # ---------------------------------------------------------------------
     # Helper methods – each returns a brand‑new ``WorldState``
@@ -261,6 +286,48 @@ class WorldState:
 
     def with_tick(self, tick: int) -> "WorldState":
         return replace(self, tick=tick)
+
+    def with_intent_graph(self, intent_graph: IntentGraph) -> "WorldState":
+        return replace(self, intent_graph=intent_graph)
+
+    def with_intentive_cognition_state(self, intentive_cognition_state: IntentiveCognitionState) -> "WorldState":
+        return replace(self, intentive_cognition_state=intentive_cognition_state)
+
+    def with_attention_state(self, attention_state: AttentionState) -> "WorldState":
+        return replace(self, attention_state=attention_state)
+
+    def with_intent_schedule(self, intent_schedule: IntentSchedule) -> "WorldState":
+        return replace(self, intent_schedule=intent_schedule)
+
+    def with_overload_state(self, overload_state: OverloadState) -> "WorldState":
+        return replace(self, overload_state=overload_state)
+
+    def with_technical_execution_state(self, technical_execution_state: TechnicalExecutionState) -> "WorldState":
+        return replace(self, technical_execution_state=technical_execution_state)
+
+    def with_operator_skill_profile(self, operator_skill_profile: OperatorSkillProfile) -> "WorldState":
+        return replace(self, operator_skill_profile=operator_skill_profile)
+
+    def with_operator_competency_profile(self, operator_competency_profile: OperatorCompetencyProfile) -> "WorldState":
+        return replace(self, operator_competency_profile=operator_competency_profile)
+
+    def with_difficulty_profile(self, difficulty_profile: DifficultyProfile) -> "WorldState":
+        return replace(self, difficulty_profile=difficulty_profile)
+
+    def with_tutoring_state(self, tutoring_state: TutoringState) -> "WorldState":
+        return replace(self, tutoring_state=tutoring_state)
+
+    def with_adaptive_curriculum(self, adaptive_curriculum: AdaptiveCurriculum) -> "WorldState":
+        return replace(self, adaptive_curriculum=adaptive_curriculum)
+
+    def with_performance_analytics(self, performance_analytics: PerformanceAnalytics) -> "WorldState":
+        return replace(self, performance_analytics=performance_analytics)
+
+    def with_episodic_memory(self, episodic_memory: EpisodicMemory) -> "WorldState":
+        return replace(self, episodic_memory=episodic_memory)
+
+    def with_recovery_state(self, recovery_state: RecoveryState) -> "WorldState":
+        return replace(self, recovery_state=recovery_state)
 
     def with_actor(self, actor: OperativeActor) -> "WorldState":
         """Replace an actor with the same role, preserving deterministic ordering."""

@@ -23,16 +23,40 @@ from scrubin.world.state import (
     PhysiologicalState,
     ProcedureState,
     ComplicationWorldState,
-    TimelineEvent,
     CognitiveState,
     ScoringState,
     ResourceState,
 )
+from scrubin.core.events import TimelineEvent
 from scrubin.engine.random import SimulationRNG
+from scrubin.cognition.intent_synthesis_engine import IntentSynthesisEngine
 from scrubin.models.types import ComplicationState, ComplicationSeverity
 from scrubin.engine.decision_node import HiddenEffect
+from scrubin.ontology.activation_engine import SemanticActivationEngine
+from scrubin.ontology.prediction_engine import SemanticPredictionEngine
+from scrubin.ontology.conflict_engine import ConflictEngine
+from scrubin.ontology.attention_engine import AttentionEngine
+from scrubin.cognition.overload_engine import OverloadEngine
+from scrubin.ontology.executive_planner import ExecutivePlanner
+from scrubin.ontology.intent_scheduler import IntentScheduler
+from scrubin.ontology.recovery_engine import RecoveryEngine
+from scrubin.ontology.strategic_engine import StrategicEngine
 from scrubin.agents.runtime_engine import MultiAgentRuntimeEngine
 from scrubin.engine.systems_biology_engine import SystemsBiologyEngine
+from scrubin.execution.workflow_engine import WorkflowEngine
+from scrubin.execution.maneuver_engine import ManeuverExecutionEngine
+from scrubin.execution.instrument_engine import InstrumentInteractionEngine
+from scrubin.execution.error_engine import TechnicalErrorEngine
+from scrubin.execution.tissue_consequence_engine import TissueConsequenceEngine
+from scrubin.biology.contamination_ecology import ContaminationEcologyEngine
+from scrubin.execution.friction_engine import FrictionEngine
+from scrubin.environment.equipment_runtime import EquipmentRuntimeEngine
+from scrubin.adaptive.competency_engine import CompetencyEvolutionEngine
+from scrubin.adaptive.difficulty_engine import AdaptiveDifficultyEngine
+from scrubin.adaptive.tutoring_engine import TutoringEngine
+from scrubin.adaptive.failure_anticipation import FailureAnticipationEngine
+from scrubin.adaptive.curriculum_engine import CurriculumEngine
+from scrubin.adaptive.analytics_engine import AnalyticsEngine
 
 # ---------------------------------------------------------------------------
 # Organ‑system state definitions (simplified for demonstration)
@@ -96,9 +120,26 @@ class PhysiologicEvolutionEngine:
         }
         self.biology_engine = SystemsBiologyEngine(rng)
         self.agent_runtime_engine = MultiAgentRuntimeEngine(rng)
-            "hemorrhage": {"map": -10.0},
-            "sepsis": {"spo2": -5.0},
-        }
+        self.strategic_engine = StrategicEngine(rng)
+        self.activation_engine = SemanticActivationEngine(rng)
+        self.prediction_engine = SemanticPredictionEngine(rng)
+        self.conflict_engine = ConflictEngine(rng)
+        self.attention_engine = AttentionEngine(rng)
+        self.overload_engine = OverloadEngine(rng)
+        self.intent_synthesis_engine = IntentSynthesisEngine(rng)
+        self.planner = ExecutivePlanner(rng)
+        self.intent_scheduler = IntentScheduler(rng)
+        self.recovery_engine = RecoveryEngine(rng)
+        self.workflow_engine = WorkflowEngine(rng)
+        self.maneuver_engine = ManeuverExecutionEngine(rng)
+        self.instrument_engine = InstrumentInteractionEngine(rng)
+        self.error_engine = TechnicalErrorEngine(rng)
+        self.competency_engine = CompetencyEvolutionEngine(rng)
+        self.difficulty_engine = AdaptiveDifficultyEngine(rng)
+        self.tutoring_engine = TutoringEngine(rng)
+        self.failure_anticipation_engine = FailureAnticipationEngine(rng)
+        self.curriculum_engine = CurriculumEngine(rng)
+        self.analytics_engine = AnalyticsEngine(rng)
 
     def _apply_complications(self, world: WorldState) -> WorldState:
         """Apply active complication effects to organ systems.
@@ -220,8 +261,42 @@ class PhysiologicEvolutionEngine:
         world = self._apply_time_pressure(world)
         # 5️⃣ Biological subsystem evolution (deterministic)
         world = self.biology_engine.evolve(world)
-        # 6️⃣ Multi‑agent runtime evolution (deterministic)
+        # 6️⃣ Strategic engines (placeholder)
+        world = self.strategic_engine.process(world)
+        # 7️⃣ Semantic activation engine
+        world = self.activation_engine.evolve(world)
+        # 8️⃣ Prediction engine
+        world = self.prediction_engine.predict(world)
+        # 9️⃣ Conflict engine
+        world = self.conflict_engine.resolve(world)
+        # 🔟 Attention engine
+        world = self.attention_engine.evolve(world)
+        # 11️⃣ Overload engine
+        world = self.overload_engine.evolve(world)
+        world = self.intent_synthesis_engine.evolve(world)
+        # 12️⃣ Executive planner
+        world = self.planner.plan(world)
+        # 13️⃣ Intent scheduler
+        world = self.intent_scheduler.schedule(world)
+        # 14️⃣ Workflow engine
+        world = self.workflow_engine.process(world)
+        # 15️⃣ Maneuver execution
+        world = self.maneuver_engine.execute(world)
+        # 16️⃣ Instrument interaction
+        world = self.instrument_engine.interact(world)
+        # 17️⃣ Technical error propagation
+        world = self.error_engine.propagate(world)
+        # 18️⃣ Recovery engine
+        # Adaptive stages
+        world = self.competency_engine.evolve(world)
+        world = self.difficulty_engine.adapt(world)
+        world = self.tutoring_engine.coach(world)
+        world = self.failure_anticipation_engine.analyze(world)
+        world = self.curriculum_engine.evolve(world)
+        world = self.analytics_engine.analyze(world)
+        world = self.recovery_engine.recover(world)
+        # 19️⃣ Multi‑agent runtime evolution (deterministic)
         world = self.agent_runtime_engine.evolve(world)
-        # 7️⃣ Advance tick (deterministic)
+        # 20️⃣ Advance tick (deterministic)
         world = world.tick_forward()
         return world

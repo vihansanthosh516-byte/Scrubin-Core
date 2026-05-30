@@ -1,1 +1,1 @@
-# ScrubIn CES Runtime Optimization
+"""Runtime utilities for deterministic simulation support."""

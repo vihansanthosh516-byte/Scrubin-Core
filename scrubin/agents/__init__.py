@@ -1,6 +1,4 @@
-from scrubin.agents.simulation import SimulationAgent
-from scrubin.agents.vitals import VitalsAgent
-from scrubin.agents.complication import ComplicationAgent
-from scrubin.agents.procedure import ComplicationSignalAgent, ProcedureAgent
+# Minimal agents package initializer – avoid heavy imports at package load time.
+# The individual agent modules can be imported directly where needed.
 
-__all__ = ["SimulationAgent", "VitalsAgent", "ComplicationAgent", "ComplicationSignalAgent", "ProcedureAgent"]
+__all__ = []

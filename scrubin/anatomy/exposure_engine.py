@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import List, Tuple
 
-from scrubin.world.state import TimelineEvent
+from scrubin.core.events import TimelineEvent
 from scrubin.anatomy.state import AnatomicalState, AnatomicalRegion, Injury
 from scrubin.engine.random import SimulationRNG
 
