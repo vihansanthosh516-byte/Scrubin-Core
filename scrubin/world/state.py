@@ -17,6 +17,8 @@ from scrubin.cognition.intentive_state import IntentiveCognitionState
 from scrubin.cognition.goal_state import GoalHierarchyState
 from scrubin.cognition.goal_conflict import GoalConflictState
 from scrubin.cognition.reflection_state import ReflectionState
+from scrubin.cognition.knowledge_graph import KnowledgeGraph
+from scrubin.cognition.learning_state import LearningState
 from scrubin.core.events import TimelineEvent
 from scrubin.agents.state import OperativeActor
 from scrubin.ontology.active_graph import ActiveSemanticGraph
@@ -256,6 +258,8 @@ class WorldState:
     adaptive_curriculum: AdaptiveCurriculum = field(default_factory=AdaptiveCurriculum)
     performance_analytics: PerformanceAnalytics = field(default_factory=PerformanceAnalytics)
     reflection_state: ReflectionState = field(default_factory=ReflectionState)
+    knowledge_graph: KnowledgeGraph = field(default_factory=KnowledgeGraph)
+    learning_state: LearningState = field(default_factory=LearningState)
 
     # ---------------------------------------------------------------------
     # Helper methods – each returns a brand‑new ``WorldState``
@@ -342,11 +346,19 @@ class WorldState:
     def with_performance_analytics(self, performance_analytics: PerformanceAnalytics) -> "WorldState":
         return replace(self, performance_analytics=performance_analytics)
 
+    def with_knowledge_graph(self, knowledge_graph: KnowledgeGraph) -> "WorldState":
+        """Update the knowledge graph immutably."""
+        return replace(self, knowledge_graph=knowledge_graph)
     def with_reflection_state(self, reflection_state: ReflectionState) -> "WorldState":
         """Update the reflection state immutably."""
         return replace(self, reflection_state=reflection_state)
 
+    def with_learning_state(self, learning_state: LearningState) -> "WorldState":
+        """Update the learning state immutably."""
+        return replace(self, learning_state=learning_state)
+
     def with_episodic_memory(self, episodic_memory: EpisodicMemory) -> "WorldState":
+        return replace(self, episodic_memory=episodic_memory)
         return replace(self, episodic_memory=episodic_memory)
 
     def with_recovery_state(self, recovery_state: RecoveryState) -> "WorldState":

@@ -30,6 +30,11 @@ from scrubin.world.state import (
 from scrubin.core.events import TimelineEvent
 from scrubin.cognition.goal_management_engine import GoalManagementEngine
 from scrubin.cognition.reflection_engine import ReflectionEngine
+from scrubin.cognition.meta_learning_engine import MetaLearningEngine
+from scrubin.cognition.pattern_extraction_engine import PatternExtractionEngine
+from scrubin.cognition.belief_formation_engine import BeliefFormationEngine
+from scrubin.cognition.belief_validation_engine import BeliefValidationEngine
+from scrubin.cognition.knowledge_graph_engine import KnowledgeGraphEngine
 from scrubin.cognition.arbitration_engine import CognitiveArbitrationEngine
 from scrubin.engine.random import SimulationRNG
 from scrubin.cognition.intent_synthesis_engine import IntentSynthesisEngine
@@ -145,6 +150,11 @@ class PhysiologicEvolutionEngine:
         self.analytics_engine = AnalyticsEngine(rng)
         self.goal_management_engine = GoalManagementEngine(rng)
         self.reflection_engine = ReflectionEngine(rng)
+        self.meta_learning_engine = MetaLearningEngine(rng)
+        self.pattern_extraction_engine = PatternExtractionEngine(rng)
+        self.belief_formation_engine = BeliefFormationEngine(rng)
+        self.belief_validation_engine = BeliefValidationEngine(rng)
+        self.knowledge_graph_engine = KnowledgeGraphEngine(rng)
         self.arbitration_engine = CognitiveArbitrationEngine(rng)
 
     def _apply_complications(self, world: WorldState) -> WorldState:
@@ -308,6 +318,11 @@ class PhysiologicEvolutionEngine:
         world = self.analytics_engine.analyze(world)
         world = self.recovery_engine.recover(world)
         world = self.reflection_engine.evolve(world)
+        world = self.meta_learning_engine.evolve(world)
+        world = self.pattern_extraction_engine.evolve(world)
+        world = self.belief_formation_engine.evolve(world)
+        world = self.belief_validation_engine.evolve(world)
+        world = self.knowledge_graph_engine.evolve(world)
         # 19️⃣ Multi‑agent runtime evolution (deterministic)
         world = self.agent_runtime_engine.evolve(world)
         # 20️⃣ Advance tick (deterministic)
