@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from scrubin.models.types import Vitals
 
 
-@dataclass
+@dataclass(frozen=True)
 class PatientProfile:
     id: str
     age: int = 50

@@ -77,7 +77,12 @@ class IntentSynthesisEngine:
             world, "intentive_cognition_state", IntentiveCognitionState()
         )
         previous_state = intentive_state
-        intentive_state = intentive_state.add_intent(auto_intent).compute_dominant_intent()
+        intentive_state = (
+        intentive_state
+        .add_intent(auto_intent)
+        .compute_dominant_intent()
+        .with_cognitive_tick(world.tick)
+    )
         # Emit deterministic timeline events
         events = [TimelineEvent(tick=world.tick, description=f"autonomous_intent_created:{auto_intent.intent_id}")]
         if previous_state.dominant_intent_id != intentive_state.dominant_intent_id:

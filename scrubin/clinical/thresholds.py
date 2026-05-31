@@ -41,7 +41,7 @@ class EscalationThresholds:
     severity_weights: tuple[float, float, float]
 
 
-@dataclass
+@dataclass(frozen=True)
 class ClinicalThresholds:
     spo2: VitalThresholds
     heart_rate: VitalThresholds
