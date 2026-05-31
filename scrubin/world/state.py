@@ -25,8 +25,8 @@ from scrubin.adaptive.tutoring_engine import TutoringState
 from scrubin.adaptive.curriculum_engine import AdaptiveCurriculum
 from scrubin.adaptive.analytics_engine import PerformanceAnalytics
 from scrubin.cognition.procedural_memory import ProceduralMemory
-from scrubin.environment.state import OperativeEnvironmentState
-from scrubin.memory.consequence_memory import ConsequenceMemory
+
+
 from scrubin.anatomy.state import AnatomicalState
 from scrubin.biology.state import SystemsBiologyState
 from scrubin.ontology.intent_graph import IntentGraph
@@ -285,6 +285,11 @@ class WorldState:
         return replace(self, actors=actors)
 
     def with_tick(self, tick: int) -> "WorldState":
+        return replace(self, tick=tick)
+
+    def with_active_semantic_graph(self, active_semantic_graph: ActiveSemanticGraph) -> "WorldState":
+        """Update the active semantic graph immutably."""
+        return replace(self, active_semantic_graph=active_semantic_graph)
         return replace(self, tick=tick)
 
     def with_intent_graph(self, intent_graph: IntentGraph) -> "WorldState":

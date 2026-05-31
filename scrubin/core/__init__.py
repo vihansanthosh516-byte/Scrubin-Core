@@ -1,4 +1,4 @@
 from scrubin.core.bus import EventBus
-from scrubin.core.orchestrator import Orchestrator
+# Orchestrator import deferred to avoid circular imports in lightweight modules
 
-__all__ = ["EventBus", "Orchestrator"]
+__all__ = ["EventBus"]

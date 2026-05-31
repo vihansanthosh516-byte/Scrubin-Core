@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from scrubin.models.intents import ActionIntent
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExecutionEvent:
     intent_id: str
     action_name: str
@@ -13,7 +13,7 @@ class ExecutionEvent:
     metadata: dict = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(frozen=True)
 class ExecutionResult:
     executed: bool
     intent_id: str

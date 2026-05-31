@@ -92,6 +92,9 @@ class ProcedurePhase:
         return all(c.evaluate(world) for c in self.entry_conditions)
 
     def can_complete(self, world: WorldState) -> bool:
+        # If no explicit completion conditions are defined, the phase does not auto‑complete.
+        if not self.completion_conditions:
+            return False
         """Return ``True`` if the phase meets **all** completion criteria.
 
         This includes ``completion_conditions`` as well as any additional

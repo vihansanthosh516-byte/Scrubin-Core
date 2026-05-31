@@ -241,8 +241,6 @@ node_a1_hemo_eval = DecisionNode(
     option_mutation=OptionMutationRule(
         unlock_options=[
             "appendectomy.a1.hemodynamics.begin_fluid_resuscitation",
-            "appendectomy.a1.hemodynamics.monitor_lactate",
-            "appendectomy.a1.hemodynamics.repeat_vitals",
         ],
         remove_options=[],
         priority_weight_changes={},
@@ -297,9 +295,8 @@ node_a1_fluid_resusc = DecisionNode(
     requires_confirmation=False,
     physiologic_delta=PhysiologicDelta(
         heart_rate=-6,
-        systolic_bp=4,
-        diastolic_bp=2,
-        perfusion=0.07,
+        bp_systolic=4,
+        bp_diastolic=2,
     ),
     anatomical_impacts=[],
     hidden_effects=[
@@ -319,7 +316,7 @@ node_a1_fluid_resusc = DecisionNode(
     failure_propagation=_empty_failure(),
     procedure_mutation=_noop_procedure_mutation(),
     option_mutation=OptionMutationRule(
-        unlock_options=["appendectomy.a1.hemodynamics.monitor_lactate"],
+        unlock_options=[],
         remove_options=[],
         priority_weight_changes={},
         emergency_overrides=[],
@@ -637,7 +634,7 @@ node_a2_ct_select = DecisionNode(
     failure_propagation=_empty_failure(),
     procedure_mutation=_noop_procedure_mutation(),
     option_mutation=OptionMutationRule(
-        unlock_options=["appendectomy.a2.imaging.interpret_correct"],
+        unlock_options=[],
         remove_options=[],
         priority_weight_changes={},
         emergency_overrides=[],

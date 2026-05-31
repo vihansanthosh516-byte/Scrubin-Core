@@ -6,7 +6,7 @@ Predicts imminent procedural and physiological failures based on competency,
 overload, consequence memory, and current system state.
 """
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from typing import List, Tuple
 
 

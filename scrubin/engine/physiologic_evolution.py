@@ -259,6 +259,10 @@ class PhysiologicEvolutionEngine:
         world = self._progress_hidden_effects(world)
         # 4️⃣ Time pressure
         world = self._apply_time_pressure(world)
+        # Fast‑path for trivial worlds (no anatomy, complications, hidden effects, intents, or tutoring interventions)
+        if not world.anatomy.regions and not world.complications.active and not world.hidden_effects and not world.intent_graph.pending_intents() and not world.tutoring_state.active_interventions:
+            # Skip heavy engine invocations – just advance the tick.
+            return world.tick_forward()
         # 5️⃣ Biological subsystem evolution (deterministic)
         world = self.biology_engine.evolve(world)
         # 6️⃣ Strategic engines (placeholder)

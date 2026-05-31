@@ -79,6 +79,8 @@ class AdaptiveCurriculum:
         return replace(self, remediation_queue=tuple(sorted(new_queue, key=lambda o: o.objective_id)))
 
 
+from scrubin.core.events import TimelineEvent
+
 class CurriculumEngine:
     """Deterministically evolve the adaptive curriculum based on competency and performance."""
 

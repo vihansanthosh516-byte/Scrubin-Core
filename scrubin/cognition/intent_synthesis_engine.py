@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Tuple
+from scrubin.core.events import TimelineEvent
 
 from scrubin.world.state import WorldState
 from scrubin.cognition.intentive_state import IntentiveCognitionState, AutonomousIntent
@@ -51,7 +52,7 @@ class IntentSynthesisEngine:
         intent_id = f"auto_intent_{world.tick}"
         description = f"Synthesized autonomous intent at tick {world.tick}"
         return AutonomousIntent(
-            intent_id=intent_id,
+            id=intent_id,
             description=description,
             urgency=urgency,
             confidence=confidence,
@@ -75,7 +76,12 @@ class IntentSynthesisEngine:
         intentive_state: IntentiveCognitionState = getattr(
             world, "intentive_cognition_state", IntentiveCognitionState()
         )
+        previous_state = intentive_state
         intentive_state = intentive_state.add_intent(auto_intent).compute_dominant_intent()
+        # Emit deterministic timeline events
+        events = [TimelineEvent(tick=world.tick, description=f"autonomous_intent_created:{auto_intent.intent_id}")]
+        if previous_state.dominant_intent_id != intentive_state.dominant_intent_id:
+            events.append(TimelineEvent(tick=world.tick, description=f"dominant_intent_shifted:{intentive_state.dominant_intent_id}"))
 
         # -----------------------------------------------------------------
         # 3️⃣  Mirror the intent into the procedural IntentGraph.
@@ -101,4 +107,6 @@ class IntentSynthesisEngine:
         # -----------------------------------------------------------------
         world = world.with_intent_graph(intent_graph)
         world = world.with_intentive_cognition_state(intentive_state)
+        for ev in events:
+            world = world.append_timeline(ev)
         return world

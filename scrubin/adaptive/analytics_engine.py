@@ -122,7 +122,7 @@ class AnalyticsEngine:
             recovery_quality=1.0 - comp.overload_resilience,  # placeholder metric
             contamination_control=1.0 - tech.current_risk_level,
             workflow_efficiency=1.0 - tech.unsafe_motion_count / max(1, tech.execution_latency + 1),
-            complication_management=comp.complication_management,
+            complication_management=getattr(comp, "complication_management", 0.0),
             longitudinal_risk=tech.micro_error_accumulation,
         )
         analytics = analytics.add_snapshot(snap)
