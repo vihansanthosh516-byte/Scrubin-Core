@@ -19,6 +19,7 @@ from scrubin.core.events import TimelineEvent
 
 from scrubin.world.state import WorldState
 from scrubin.cognition.intentive_state import IntentiveCognitionState, AutonomousIntent
+from scrubin.cognition.goal_state import GoalHierarchyState
 from scrubin.ontology.intent_graph import IntentGraph, IntentNode
 
 
@@ -49,6 +50,8 @@ class IntentSynthesisEngine:
         # Deterministic confidence: 0.6 on even ticks, 0.8 on odd ticks.
         confidence = 0.6 if world.tick % 2 == 0 else 0.8
 
+        goal_state: GoalHierarchyState = getattr(world, "goal_hierarchy_state", GoalHierarchyState())
+        dominant_goal_id = goal_state.dominant_goal.id if goal_state.dominant_goal else None
         intent_id = f"auto_intent_{world.tick}"
         description = f"Synthesized autonomous intent at tick {world.tick}"
         return AutonomousIntent(
@@ -56,6 +59,7 @@ class IntentSynthesisEngine:
             description=description,
             urgency=urgency,
             confidence=confidence,
+            originating_goal=dominant_goal_id,
         )
 
     def evolve(self, world: WorldState) -> WorldState:

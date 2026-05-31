@@ -14,6 +14,9 @@ from typing import Tuple, List, Any
 from scrubin.models.types import Vitals, VitalDelta, ComplicationState
 from scrubin.cognition.state import CognitiveState
 from scrubin.cognition.intentive_state import IntentiveCognitionState
+from scrubin.cognition.goal_state import GoalHierarchyState
+from scrubin.cognition.goal_conflict import GoalConflictState
+from scrubin.cognition.reflection_state import ReflectionState
 from scrubin.core.events import TimelineEvent
 from scrubin.agents.state import OperativeActor
 from scrubin.ontology.active_graph import ActiveSemanticGraph
@@ -237,6 +240,8 @@ class WorldState:
     active_semantic_graph: ActiveSemanticGraph = field(default_factory=ActiveSemanticGraph)
     intent_graph: IntentGraph = field(default_factory=IntentGraph)
     intentive_cognition_state: IntentiveCognitionState = field(default_factory=IntentiveCognitionState)
+    goal_hierarchy_state: GoalHierarchyState = field(default_factory=GoalHierarchyState)
+    goal_conflict_state: GoalConflictState = field(default_factory=GoalConflictState)
     attention_state: AttentionState = field(default_factory=AttentionState)
     intent_schedule: IntentSchedule = field(default_factory=IntentSchedule)
     overload_state: OverloadState = field(default_factory=OverloadState)
@@ -250,6 +255,7 @@ class WorldState:
     tutoring_state: TutoringState = field(default_factory=TutoringState)
     adaptive_curriculum: AdaptiveCurriculum = field(default_factory=AdaptiveCurriculum)
     performance_analytics: PerformanceAnalytics = field(default_factory=PerformanceAnalytics)
+    reflection_state: ReflectionState = field(default_factory=ReflectionState)
 
     # ---------------------------------------------------------------------
     # Helper methods – each returns a brand‑new ``WorldState``
@@ -298,6 +304,14 @@ class WorldState:
     def with_intentive_cognition_state(self, intentive_cognition_state: IntentiveCognitionState) -> "WorldState":
         return replace(self, intentive_cognition_state=intentive_cognition_state)
 
+    def with_goal_hierarchy_state(self, goal_hierarchy_state: GoalHierarchyState) -> "WorldState":
+        """Update the goal hierarchy state immutably."""
+        return replace(self, goal_hierarchy_state=goal_hierarchy_state)
+
+    def with_goal_conflict_state(self, goal_conflict_state: GoalConflictState) -> "WorldState":
+        """Update the goal conflict state immutably."""
+        return replace(self, goal_conflict_state=goal_conflict_state)
+
     def with_attention_state(self, attention_state: AttentionState) -> "WorldState":
         return replace(self, attention_state=attention_state)
 
@@ -327,6 +341,10 @@ class WorldState:
 
     def with_performance_analytics(self, performance_analytics: PerformanceAnalytics) -> "WorldState":
         return replace(self, performance_analytics=performance_analytics)
+
+    def with_reflection_state(self, reflection_state: ReflectionState) -> "WorldState":
+        """Update the reflection state immutably."""
+        return replace(self, reflection_state=reflection_state)
 
     def with_episodic_memory(self, episodic_memory: EpisodicMemory) -> "WorldState":
         return replace(self, episodic_memory=episodic_memory)

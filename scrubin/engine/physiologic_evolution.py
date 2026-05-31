@@ -28,6 +28,9 @@ from scrubin.world.state import (
     ResourceState,
 )
 from scrubin.core.events import TimelineEvent
+from scrubin.cognition.goal_management_engine import GoalManagementEngine
+from scrubin.cognition.reflection_engine import ReflectionEngine
+from scrubin.cognition.arbitration_engine import CognitiveArbitrationEngine
 from scrubin.engine.random import SimulationRNG
 from scrubin.cognition.intent_synthesis_engine import IntentSynthesisEngine
 from scrubin.models.types import ComplicationState, ComplicationSeverity
@@ -140,6 +143,9 @@ class PhysiologicEvolutionEngine:
         self.failure_anticipation_engine = FailureAnticipationEngine(rng)
         self.curriculum_engine = CurriculumEngine(rng)
         self.analytics_engine = AnalyticsEngine(rng)
+        self.goal_management_engine = GoalManagementEngine(rng)
+        self.reflection_engine = ReflectionEngine(rng)
+        self.arbitration_engine = CognitiveArbitrationEngine(rng)
 
     def _apply_complications(self, world: WorldState) -> WorldState:
         """Apply active complication effects to organ systems.
@@ -277,6 +283,8 @@ class PhysiologicEvolutionEngine:
         world = self.attention_engine.evolve(world)
         # 11️⃣ Overload engine
         world = self.overload_engine.evolve(world)
+        world = self.goal_management_engine.evolve(world)
+        world = self.arbitration_engine.evolve(world)
         world = self.intent_synthesis_engine.evolve(world)
         # 12️⃣ Executive planner
         world = self.planner.plan(world)
@@ -299,6 +307,7 @@ class PhysiologicEvolutionEngine:
         world = self.curriculum_engine.evolve(world)
         world = self.analytics_engine.analyze(world)
         world = self.recovery_engine.recover(world)
+        world = self.reflection_engine.evolve(world)
         # 19️⃣ Multi‑agent runtime evolution (deterministic)
         world = self.agent_runtime_engine.evolve(world)
         # 20️⃣ Advance tick (deterministic)
