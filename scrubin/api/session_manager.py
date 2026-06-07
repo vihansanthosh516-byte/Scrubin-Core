@@ -64,6 +64,15 @@ class SessionManager:
         The result mimics a real engine step while keeping the implementation
         simple and deterministic.
         """
+        """Apply a deterministic placeholder action to the session.
+
+        For the purpose of the API foundation we do **not** invoke the full
+        cognition pipeline.  Instead we perform a minimal deterministic update:
+        * Append a ``TimelineEvent`` describing the requested action.
+        * Advance the simulation tick by one.
+        The result mimics a real engine step while keeping the implementation
+        simple and deterministic.
+        """
         if request.session_id not in self._sessions:
             raise KeyError(f"Session '{request.session_id}' not found")
 
@@ -95,7 +104,7 @@ class SessionManager:
     # ---------------------------------------------------------------------
     def get_state(self, session_id: str) -> SimulationStateResponse:
         """Return the current immutable snapshot for a session.
-
+ 
         The returned ``SimulationStateResponse`` contains the full ``WorldState``
         as well as convenient aggregates for the client.
         """
@@ -112,3 +121,20 @@ class SessionManager:
             reflection_summary=world.reflection_state,
             learning_summary=world.learning_state,
         )
+
+    def set_state(self, session_id: str, world: WorldState) -> None:
+        """Replace the stored ``WorldState`` for ``session_id``.
+        Used by the persistence layer when loading a saved snapshot.
+        """
+        if session_id not in self._sessions:
+            raise KeyError(f"Session '{session_id}' not found")
+        self._sessions[session_id] = world
+
+    def delete_session(self, session_id: str) -> None:
+        """Remove a session from the in‑memory store.
+        Called when the persistent representation is deleted.
+        """
+        if session_id not in self._sessions:
+            raise KeyError(f"Session '{session_id}' not found")
+        del self._sessions[session_id]
+
