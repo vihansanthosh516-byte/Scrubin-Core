@@ -123,6 +123,6 @@ class GoalManagementEngine:
         # 6️⃣ Apply updated goal hierarchy to the world and emit events.
         # -----------------------------------------------------------------
         world = world.with_goal_hierarchy_state(goal_state)
-        for ev in events:
-            world = world.append_timeline(ev)
+        # Append all events in one immutable operation.
+        world = world.append_timeline(events) if events else world
         return world

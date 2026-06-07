@@ -300,7 +300,6 @@ class WorldState:
     def with_active_semantic_graph(self, active_semantic_graph: ActiveSemanticGraph) -> "WorldState":
         """Update the active semantic graph immutably."""
         return replace(self, active_semantic_graph=active_semantic_graph)
-        return replace(self, tick=tick)
 
     def with_intent_graph(self, intent_graph: IntentGraph) -> "WorldState":
         return replace(self, intent_graph=intent_graph)
@@ -359,7 +358,6 @@ class WorldState:
 
     def with_episodic_memory(self, episodic_memory: EpisodicMemory) -> "WorldState":
         return replace(self, episodic_memory=episodic_memory)
-        return replace(self, episodic_memory=episodic_memory)
 
     def with_recovery_state(self, recovery_state: RecoveryState) -> "WorldState":
         return replace(self, recovery_state=recovery_state)
@@ -370,8 +368,20 @@ class WorldState:
         # Insert the updated actor at the end to keep deterministic order (role order is stable).
         return replace(self, actors=filtered + (actor,))
 
-    def append_timeline(self, event: TimelineEvent) -> "WorldState":
-        return replace(self, timeline=self.timeline + (event,))
+    def append_timeline(self, events: TimelineEvent | tuple[TimelineEvent, ...] | list[TimelineEvent]) -> "WorldState":
+        """Append one or many timeline events immutably.
+
+        Accepts either a single ``TimelineEvent`` or an iterable of events.
+        The original signature (single event) is retained for backward
+        compatibility – a single ``TimelineEvent`` is treated as a one‑element
+        tuple.
+        """
+        if isinstance(events, TimelineEvent):
+            new_events = (events,)
+        else:
+            # Assume iterable of TimelineEvent objects.
+            new_events = tuple(events)
+        return replace(self, timeline=self.timeline + new_events)
 
     # ---------------------------------------------------------------------
     # Convenience shortcuts used by the engine

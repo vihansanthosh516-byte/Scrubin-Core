@@ -81,8 +81,8 @@ class BeliefFormationEngine:
 
         # Apply updated learning state and emit events.
         world = world.with_learning_state(learning_state)
-        for ev in new_events:
-            world = world.append_timeline(ev)
+        # Batch append events.
+        world = world.append_timeline(new_events) if new_events else world
         return world
 
     @staticmethod

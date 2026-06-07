@@ -42,6 +42,6 @@ class OverloadEngine:
             overload_state = overload_state.with_level(new_level).with_ticks(new_ticks)
 
         new_world = world.with_overload_state(overload_state)
-        for ev in events:
-            new_world = new_world.append_timeline(ev)
+        # Batch append timeline events (if any).
+        new_world = new_world.append_timeline(events) if events else new_world
         return new_world

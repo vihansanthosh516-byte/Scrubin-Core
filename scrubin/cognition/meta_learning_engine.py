@@ -61,6 +61,6 @@ class MetaLearningEngine:
 
         # Apply updated learning state and emit accumulated events.
         world = world.with_learning_state(learning_state)
-        for ev in new_events:
-            world = world.append_timeline(ev)
+        # Batch append timeline events.
+        world = world.append_timeline(new_events) if new_events else world
         return world

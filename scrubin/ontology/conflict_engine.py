@@ -30,30 +30,36 @@ class ConflictEngine:
         intents: IntentGraph = world.intent_graph
         events: List[TimelineEvent] = []
         pending = intents.pending_intents()
-        # Simple O(n^2) deterministic pairwise check – deterministic ordering
-        for i in range(len(pending)):
-            for j in range(i + 1, len(pending)):
-                a: IntentNode = pending[i]
-                b: IntentNode = pending[j]
-                # Conflict if they require the same concept but have mutually
-                # exclusive blocking conditions (deterministically expressed as
-                # strings that start with "!" to denote negation).
-                shared_concepts = set(a.required_concepts) & set(b.required_concepts)
-                if not shared_concepts:
-                    continue
-                # Detect contradictory blocks – e.g., "!increase_pressure" vs
-                # "increase_pressure".
-                for cond_a in a.blocking_conditions:
-                    for cond_b in b.blocking_conditions:
-                        if cond_a.startswith("!") and cond_b == cond_a[1:]:
-                            events.append(
-                                TimelineEvent(
-                                    world.tick,
-                                    f"semantic_conflict_detected:{a.intent_id}-{b.intent_id}",
+        # Index intents by required concept for O(n) detection.
+        concept_index: dict[str, list[IntentNode]] = {}
+        for intent in pending:
+            for concept in intent.required_concepts:
+                concept_index.setdefault(concept, []).append(intent)
+        # For each concept with multiple intents, check contradictory blocking conditions.
+        for intents_sharing in concept_index.values():
+            if len(intents_sharing) < 2:
+                continue
+            # Build a map from blocking condition to intents that contain it.
+            block_map: dict[str, list[IntentNode]] = {}
+            for intent in intents_sharing:
+                for block in intent.blocking_conditions:
+                    block_map.setdefault(block, []).append(intent)
+            # Detect contradictions: a block "!X" and another block "X" in the same concept group.
+            for block, intents_with_block in block_map.items():
+                if block.startswith("!"):
+                    pos = block[1:]
+                    if pos in block_map:
+                        # Emit conflict event for each unordered pair of intents across the contradictory blocks.
+                        for a in intents_with_block:
+                            for b in block_map[pos]:
+                                if a.intent_id == b.intent_id:
+                                    continue
+                                events.append(
+                                    TimelineEvent(
+                                        world.tick,
+                                        f"semantic_conflict_detected:{a.intent_id}-{b.intent_id}",
+                                    )
                                 )
-                            )
-        # Apply events to world.
-        new_world = world
-        for ev in events:
-            new_world = new_world.append_timeline(ev)
+        # Apply events to world in a single immutable update.
+        new_world = world.append_timeline(events) if events else world
         return new_world

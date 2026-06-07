@@ -181,6 +181,6 @@ class CognitiveArbitrationEngine:
         world = world.with_goal_hierarchy_state(goal_state)
         world = world.with_intentive_cognition_state(intent_state)
         world = world.with_goal_conflict_state(conflict_state)
-        for ev in events:
-            world = world.append_timeline(ev)
+        # Batch append timeline events.
+        world = world.append_timeline(events) if events else world
         return world

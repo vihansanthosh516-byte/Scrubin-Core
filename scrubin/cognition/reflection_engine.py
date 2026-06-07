@@ -102,6 +102,6 @@ class ReflectionEngine:
             )
         # Apply updated reflection state and events to the world
         world = world.with_reflection_state(reflection_state)
-        for ev in new_events:
-            world = world.append_timeline(ev)
+        # Batch append events.
+        world = world.append_timeline(new_events) if new_events else world
         return world

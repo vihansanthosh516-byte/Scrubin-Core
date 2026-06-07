@@ -68,6 +68,6 @@ class BeliefValidationEngine:
             new_events.append(TimelineEvent(tick=world.tick, description=f"belief_validated:{belief.belief_id}"))
 
         world = world.with_learning_state(learning_state)
-        for ev in new_events:
-            world = world.append_timeline(ev)
+        # Batch append events.
+        world = world.append_timeline(new_events) if new_events else world
         return world

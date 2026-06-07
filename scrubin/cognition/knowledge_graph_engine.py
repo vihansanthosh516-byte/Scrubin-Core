@@ -114,6 +114,6 @@ class KnowledgeGraphEngine:
 
         # Apply updated graph and emit events.
         world = world.with_knowledge_graph(graph)
-        for ev in new_events:
-            world = world.append_timeline(ev)
+        # Batch append events.
+        world = world.append_timeline(new_events) if new_events else world
         return world
