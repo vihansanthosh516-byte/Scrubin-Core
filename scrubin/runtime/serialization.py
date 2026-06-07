@@ -62,8 +62,35 @@ def deserialize_world(data: Dict[str, Any]) -> WorldState:
     """Recreate a ``WorldState`` instance from the output of
     :func:`serialize_world`.
 
-    The function performs a recursive reconstruction so that all nested
-    frozen dataclasses are restored with their original types and tuple fields
-    are re‑converted from the list representation used by JSON.
+    This implementation resolves forward‑referenced type hints and recursively
+    reconstructs nested frozen dataclasses, converting JSON lists back to tuples.
     """
-    return _reconstruct_dataclass(WorldState, data)
+    from dataclasses import is_dataclass, fields
+    from typing import get_type_hints, get_origin, get_args, Any
+
+    def _reconstruct(cls, datum):
+        if not is_dataclass(cls):
+            return datum
+        type_hints = get_type_hints(cls)
+        init_kwargs = {}
+        for f in fields(cls):
+            if f.name not in datum:
+                continue
+            value = datum[f.name]
+            hint = type_hints.get(f.name, f.type)
+            origin = get_origin(hint)
+            if origin is tuple:
+                args = get_args(hint)
+                elem_type = args[0] if args and args[0] is not Ellipsis else Any
+                if isinstance(value, list):
+                    init_kwargs[f.name] = tuple(_reconstruct(elem_type, v) if isinstance(v, dict) else v for v in value)
+                else:
+                    init_kwargs[f.name] = tuple()
+                continue
+            if hasattr(hint, "__dataclass_fields__") and isinstance(value, dict):
+                init_kwargs[f.name] = _reconstruct(hint, value)
+            else:
+                init_kwargs[f.name] = value
+        return cls(**init_kwargs)
+
+    return _reconstruct(WorldState, data)
