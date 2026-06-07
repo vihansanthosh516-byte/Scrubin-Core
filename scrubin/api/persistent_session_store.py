@@ -16,14 +16,15 @@ class SessionMetadata:
     last_saved_tick: int
     simulation_seed: int
     version: int
+    owner_user_id: str
     world_hash: str
     schema_version: int = field(default=SCHEMA_VERSION)
 
     @staticmethod
-    def from_state(session_id: str, state: WorldState, *, version: int = 1) -> 'SessionMetadata':
+    def from_state(session_id: str, state: WorldState, *, version: int = 1, owner_user_id: str = "default_user") -> 'SessionMetadata':
         payload = serialize_worldstate(state)
         world_hash = hashlib.sha256(payload.encode('utf-8')).hexdigest()
-        return SessionMetadata(session_id, state.tick, state.tick, state.seed, version, world_hash)
+        return SessionMetadata(session_id, state.tick, state.tick, state.seed, version, owner_user_id, world_hash)
 
 class PersistentSessionStore:
     def __init__(self, storage_dir: str | None = None):
@@ -43,24 +44,25 @@ class PersistentSessionStore:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
 
-    def create_session(self, session_id: str, initial_state: WorldState) -> SessionMetadata:
+    def create_session(self, session_id: str, initial_state: WorldState, owner_user_id: str = "default_user") -> SessionMetadata:
         path = self._session_path(session_id)
         if os.path.exists(path):
             raise FileExistsError(f'Session {session_id!r} exists')
-        meta = SessionMetadata.from_state(session_id, initial_state)
+        meta = SessionMetadata.from_state(session_id, initial_state, owner_user_id=owner_user_id)
         payload = serialize_worldstate(initial_state)
-        data = {'metadata': {'session_id': meta.session_id,'created_at_tick': meta.created_at_tick,'last_saved_tick': meta.last_saved_tick,'simulation_seed': meta.simulation_seed,'version': meta.version,'world_hash': meta.world_hash,'schema_version': meta.schema_version},'world_state': payload}
+        data = {'metadata': {'session_id': meta.session_id,'created_at_tick': meta.created_at_tick,'last_saved_tick': meta.last_saved_tick,'simulation_seed': meta.simulation_seed,'version': meta.version,'owner_user_id': meta.owner_user_id,'world_hash': meta.world_hash,'schema_version': meta.schema_version},'world_state': payload}
         self._write_file(path, data)
         return meta
 
-    def save_session(self, session_id: str, state: WorldState) -> SessionMetadata:
+    def save_session(self, session_id: str, state: WorldState, owner_user_id: str = "default_user") -> SessionMetadata:
         path = self._session_path(session_id)
         if not os.path.exists(path):
             raise FileNotFoundError(f'Session {session_id!r} not found')
         existing = self._read_file(path)['metadata']
-        meta = SessionMetadata(session_id, existing.get('created_at_tick', state.tick), state.tick, state.seed, existing.get('version', 1), hashlib.sha256(serialize_worldstate(state).encode('utf-8')).hexdigest(), SCHEMA_VERSION)
+        owner_id = existing.get('owner_user_id', owner_user_id)
+        meta = SessionMetadata(session_id, existing.get('created_at_tick', state.tick), state.tick, state.seed, existing.get('version', 1), owner_id, hashlib.sha256(serialize_worldstate(state).encode('utf-8')).hexdigest(), SCHEMA_VERSION)
         payload = serialize_worldstate(state)
-        data = {'metadata': {'session_id': meta.session_id,'created_at_tick': meta.created_at_tick,'last_saved_tick': meta.last_saved_tick,'simulation_seed': meta.simulation_seed,'version': meta.version,'world_hash': meta.world_hash,'schema_version': meta.schema_version},'world_state': payload}
+        data = {'metadata': {'session_id': meta.session_id,'created_at_tick': meta.created_at_tick,'last_saved_tick': meta.last_saved_tick,'simulation_seed': meta.simulation_seed,'version': meta.version,'owner_user_id': meta.owner_user_id,'world_hash': meta.world_hash,'schema_version': meta.schema_version},'world_state': payload}
         self._write_file(path, data)
         return meta
 
@@ -70,7 +72,7 @@ class PersistentSessionStore:
             raise FileNotFoundError(f'Session {session_id!r} not found')
         data = self._read_file(path)
         meta_dict = data['metadata']
-        meta = SessionMetadata(meta_dict['session_id'], meta_dict['created_at_tick'], meta_dict['last_saved_tick'], meta_dict['simulation_seed'], meta_dict['version'], meta_dict['world_hash'], meta_dict.get('schema_version', SCHEMA_VERSION))
+        meta = SessionMetadata(meta_dict['session_id'], meta_dict['created_at_tick'], meta_dict['last_saved_tick'], meta_dict['simulation_seed'], meta_dict['version'], meta_dict.get('owner_user_id', 'default_user'), meta_dict['world_hash'], meta_dict.get('schema_version', SCHEMA_VERSION))
         world = deserialize_worldstate(data['world_state'])
         return world, meta
 
@@ -80,6 +82,38 @@ class PersistentSessionStore:
             raise FileNotFoundError(f'Session {session_id!r} not found')
         os.remove(path)
 
+    def list_sessions_for_user(self, user_id: str) -> List[str]:
+        ids = []
+        for f in os.listdir(self.storage_dir):
+            if not f.endswith('.json'):
+                continue
+            path = os.path.join(self.storage_dir, f)
+            try:
+                data = self._read_file(path)
+                meta = data.get('metadata', {})
+                if meta.get('owner_user_id') == user_id:
+                    ids.append(os.path.splitext(f)[0])
+            except Exception:
+                continue
+        return sorted(ids)
+
     def list_sessions(self) -> List[str]:
         files = [f for f in os.listdir(self.storage_dir) if f.endswith('.json')]
         return sorted([os.path.splitext(f)[0] for f in files])
+
+    def get_metadata(self, session_id: str) -> SessionMetadata:
+        path = self._session_path(session_id)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f'Session {session_id!r} not found')
+        data = self._read_file(path)
+        meta_dict = data['metadata']
+        return SessionMetadata(
+            meta_dict['session_id'],
+            meta_dict['created_at_tick'],
+            meta_dict['last_saved_tick'],
+            meta_dict['simulation_seed'],
+            meta_dict['version'],
+            meta_dict.get('owner_user_id', 'default_user'),
+            meta_dict['world_hash'],
+            meta_dict.get('schema_version', SCHEMA_VERSION),
+        )

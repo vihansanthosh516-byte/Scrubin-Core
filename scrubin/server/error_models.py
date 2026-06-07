@@ -32,3 +32,8 @@ class SerializationError(APIError):
 class PersistenceError(APIError):
     """Error interacting with the persistence layer (e.g., I/O)."""
     pass
+
+@dataclass(frozen=True, slots=True)
+class AuthorizationError(APIError):
+    """User not authorized to access the requested resource."""
+    pass

@@ -35,11 +35,12 @@ class SessionManager:
     def __init__(self) -> None:
         # Mapping from session_id (hex string) to the current WorldState.
         self._sessions: Dict[str, WorldState] = {}
+        self._owners: Dict[str, str] = {}
 
     # ---------------------------------------------------------------------
     # Session lifecycle
     # ---------------------------------------------------------------------
-    def create_session(self, request: SimulationCreateRequest) -> SimulationCreateResponse:
+    def create_session(self, request: SimulationCreateRequest, user_id: str = "default_user") -> SimulationCreateResponse:
         """Create a new session and return the initial world.
 
         The ``seed`` is passed directly to ``WorldState``; the ``initial_tick``
@@ -49,6 +50,7 @@ class SessionManager:
         session_id = uuid.uuid4().hex
         world = WorldState(tick=request.initial_tick, seed=request.seed)
         self._sessions[session_id] = world
+        self._owners[session_id] = user_id
         return SimulationCreateResponse(session_id=session_id, initial_world_state=world)
 
     # ---------------------------------------------------------------------
@@ -122,13 +124,15 @@ class SessionManager:
             learning_summary=world.learning_state,
         )
 
-    def set_state(self, session_id: str, world: WorldState) -> None:
+    def set_state(self, session_id: str, world: WorldState, owner_user_id: str | None = None) -> None:
         """Replace the stored ``WorldState`` for ``session_id``.
         Used by the persistence layer when loading a saved snapshot.
         """
         if session_id not in self._sessions:
             raise KeyError(f"Session '{session_id}' not found")
         self._sessions[session_id] = world
+        if owner_user_id is not None:
+            self._owners[session_id] = owner_user_id
 
     def delete_session(self, session_id: str) -> None:
         """Remove a session from the in‑memory store.
@@ -137,4 +141,5 @@ class SessionManager:
         if session_id not in self._sessions:
             raise KeyError(f"Session '{session_id}' not found")
         del self._sessions[session_id]
+        self._owners.pop(session_id, None)
 

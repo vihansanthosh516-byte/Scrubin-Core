@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 
 from .routes import router
-from .error_models import SessionNotFoundError, ValidationError, PersistenceError
+from .error_models import SessionNotFoundError, ValidationError, PersistenceError, AuthorizationError
 
 app = FastAPI(title="Scrubin Core HTTP API (Phase P.3)")
 app.include_router(router)
@@ -20,3 +20,7 @@ async def validation_error_handler(request: Request, exc: ValidationError):
 @app.exception_handler(PersistenceError)
 async def persistence_error_handler(request: Request, exc: PersistenceError):
     return JSONResponse(status_code=500, content=jsonable_encoder(exc))
+
+@app.exception_handler(AuthorizationError)
+async def authorization_error_handler(request: Request, exc: AuthorizationError):
+    return JSONResponse(status_code=exc.code or 403, content=jsonable_encoder(exc))
