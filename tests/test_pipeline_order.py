@@ -10,8 +10,16 @@ import pathlib, re
 
 
 def test_physiologic_evolution_step_order():
-    # Resolve the path to the engine source file.
-    engine_path = pathlib.Path(__file__).parents[2] / "scrubin" / "engine" / "physiologic_evolution.py"
+    # Dynamically locate the engine source file regardless of repository name or location.
+    def locate_engine() -> pathlib.Path:
+        current = pathlib.Path(__file__).resolve()
+        for parent in [current] + list(current.parents):
+            candidate = parent / "scrubin" / "engine" / "physiologic_evolution.py"
+            if candidate.is_file():
+                return candidate
+        raise FileNotFoundError("physiologic_evolution.py not found")
+
+    engine_path = locate_engine()
     source = engine_path.read_text(encoding="utf-8")
     # Find all ordered step markers – they appear as "# <number>" possibly followed by an emoji.
     markers = [int(num) for num in re.findall(r"# (\d+)", source)]

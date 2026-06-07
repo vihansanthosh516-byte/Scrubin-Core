@@ -1,0 +1,1 @@
+"""Search package – deterministic adaptive experiment search (Phase P.13)."""

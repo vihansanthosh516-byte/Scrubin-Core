@@ -179,5 +179,17 @@ def list_sessions(
     return ids
 
 # ---------------------------------------------------------------------------
+# Misc endpoints – health & readiness
+# ---------------------------------------------------------------------------
+
+@router.get("/health")
+def health():
+    return {"status": "ok"}
+
+@router.get("/ready")
+def ready():
+    return {"status": "ready"}
+
+# ---------------------------------------------------------------------------
 # Exception handlers – translate custom error models to HTTP responses.
 # ---------------------------------------------------------------------------

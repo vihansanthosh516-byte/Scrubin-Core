@@ -1,4 +1,4 @@
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import time
 from scrubin.control_plane.jobs import JobManager, JobType, JobStatus
 from scrubin.control_plane.sessions import SessionManager, SessionConfig

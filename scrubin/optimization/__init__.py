@@ -1,1 +1,1 @@
-# ScrubIn Optimization & RL Objectives
+'''Optimization package – deterministic multi‑objective analysis (Phase P.14).'''

@@ -276,7 +276,17 @@ class PhysiologicEvolutionEngine:
         # 4️⃣ Time pressure
         world = self._apply_time_pressure(world)
         # Fast‑path for trivial worlds (no anatomy, complications, hidden effects, intents, or tutoring interventions)
-        if not world.anatomy.regions and not world.complications.active and not world.hidden_effects and not world.intent_graph.pending_intents() and not world.tutoring_state.active_interventions:
+        # Fast‑path optimisation: skip heavy engine invocations only when the physiologic state is entirely default.
+        # If the cardiovascular MAP has been altered (e.g., low MAP for testing), we must run the full pipeline
+        # because downstream biology depends on MAP.
+        if (
+            not world.anatomy.regions
+            and not world.complications.active
+            and not world.hidden_effects
+            and not world.intent_graph.pending_intents()
+            and not world.tutoring_state.active_interventions
+            and world.physiology.cardiovascular.map == 100.0
+        ):
             # Skip heavy engine invocations – just advance the tick.
             return world.tick_forward()
         # 5️⃣ Biological subsystem evolution (deterministic)
