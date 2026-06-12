@@ -1,0 +1,9 @@
+{
+  "structures": [
+    { "id": "cecum", "name": "Cecum", "type": "organ" },
+    { "id": "appendix", "name": "Appendix", "type": "organ" },
+    { "id": "mesoappendix", "name": "Mesoappendix", "type": "ligament" },
+    { "id": "ileum", "name": "Terminal Ileum", "type": "organ" },
+    { "id": "abdominal_wall", "name": "Abdominal Wall", "type": "tissue" }
+  ]
+}

@@ -1,0 +1,6 @@
+[
+  {"id": "phase_entry", "name": "Entry", "description": "Patient positioning, induction, pneumoperitoneum creation."},
+  {"id": "phase_exposure", "name": "Exposure", "description": "Port placement, visualization, identification of cecum and appendix."},
+  {"id": "phase_division", "name": "Division", "description": "Mesoappendix management, appendix transection, stump closure."},
+  {"id": "phase_closure", "name": "Closure", "description": "Specimen retrieval, desufflation, port site closure, dressing."}
+]

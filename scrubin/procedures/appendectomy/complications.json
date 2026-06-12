@@ -1,0 +1,23 @@
+[
+  {
+    "id": "bleeding",
+    "description": "Active arterial/venous bleed from mesoappendix or bowel wall.",
+    "trigger_conditions": {"blood_loss": {"gt": 20}},
+    "physiology_effects": {"shock": true, "heart_rate_increase": 20, "mean_arterial_pressure_decrease": 10},
+    "remediation_actions": ["apply_pressure", "use_cautery", "convert_to_open"]
+  },
+  {
+    "id": "hypoxia",
+    "description": "SpO₂ < 90% sustained for >30 s.",
+    "trigger_conditions": {"spO2": {"lt": 90}},
+    "physiology_effects": {"oxygen_debt": 15, "heart_rate_increase": 10},
+    "remediation_actions": ["increase_fio2", "adjust_ventilation"]
+  },
+  {
+    "id": "infection",
+    "description": "Contamination of the peritoneal cavity (e.g., appendix spillage).",
+    "trigger_conditions": {"contamination": true},
+    "physiology_effects": {"inflammatory_response": 5, "temperature_increase": 1.0},
+    "remediation_actions": ["administer_antibiotics", "irrigate_cavity"]
+  }
+]

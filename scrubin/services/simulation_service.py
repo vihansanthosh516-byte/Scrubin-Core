@@ -1,6 +1,7 @@
 import uuid
 import asyncio
 import random
+from dataclasses import replace
 
 from scrubin.core.orchestrator import Orchestrator
 from scrubin.core.config import ConfigLayer
@@ -10,6 +11,7 @@ from scrubin.agents.complication import ComplicationAgent
 from scrubin.agents.procedure import ProcedureAgent
 from scrubin.patient.profile import PatientProfile, PATIENT_PROFILES, STANDARD_PATIENT
 from scrubin.tester.profiles.registry import PROFILES, StressProfile
+from scrubin.procedures.registry import BASE_DIR
 
 from scrubin.projections.state import StateProjection
 from scrubin.projections.event import EventProjection
@@ -18,14 +20,18 @@ from scrubin.api.mappers import map_option_to_dto, StateSnapshotDTO
 from scrubin.models.intents import ActionIntent
 from scrubin.engine.procedure import ProcedurePhase
 from scrubin.engine.procedural_phase_engine import ProceduralPhaseEngine
+from scrubin.decision.dynamic_actions import generate_dynamic_options
+from scrubin.decision.consequence_engine import apply_consequence
 
 class SimulationService:
-    def __init__(self, session_id: str, seed: int, profile_name: str, patient_profile_id: str, mode: str):
+    def __init__(self, session_id: str, seed: int, profile_name: str, patient_profile_id: str, mode: str, procedure_id: str | None = None, variant_id: str | None = None):
         self.session_id = session_id
         self.seed = seed
         self.profile_name = profile_name
         self.patient_profile_id = patient_profile_id
         self.mode = mode
+        self.procedure_id = procedure_id
+        self.variant_id = variant_id
         
         self.profile = PROFILES.get(profile_name, StressProfile)()
         self.patient_profile = PATIENT_PROFILES.get(patient_profile_id, STANDARD_PATIENT)
@@ -58,21 +64,24 @@ class SimulationService:
         self._wire_decision(self.orchestrator)
         
         self.orchestrator.setup()
-        # Load a default procedure definition (appendectomy) for interactive sessions
+        # Load a procedure definition (default to "appendectomy" if none specified)
         from scrubin.procedures.registry import get_procedure
-
+        proc_id = procedure_id or "appendectomy"
         try:
-            self.procedure = get_procedure("appendectomy")
+            self.procedure = get_procedure(proc_id)
             self._procedure_phases = self.procedure.get("phases", [])
-            # Convert raw phase dictionaries into typed ProcedurePhase objects for richer handling
+            # Convert raw phase dictionaries into typed ProcedurePhase objects
             self._procedure_phase_objs = [ProcedurePhase.from_dict(p) for p in self._procedure_phases]
-        # Initialise the deterministic procedural phase engine with the typed phases.
-        self.procedural_phase_engine = ProceduralPhaseEngine({p.id: p for p in self._procedure_phase_objs})
-            print(f"[PROCEDURE] Loaded procedure '{self.procedure.get('id')}' with {len(self._procedure_phases)} phases")
         except FileNotFoundError:
             self.procedure = None
             self._procedure_phases = []
-            print("[PROCEDURE] No procedure definition found; proceeding without procedure steps")
+            self._procedure_phase_objs = []
+            print(f"[PROCEDURE] Procedure '{proc_id}' not found; proceeding without procedure steps")
+        else:
+            # Initialise the deterministic procedural phase engine with the typed phases.
+            self.procedural_phase_engine = ProceduralPhaseEngine({p.id: p for p in self._procedure_phase_objs})
+            print(f"[PROCEDURE] Loaded procedure '{self.procedure.get('id')}' with {len(self._procedure_phases)} phases")
+        self._apply_variant()
         self.event_queue = asyncio.Queue()
         # Generate initial decision options for interactive sessions so that the first snapshot contains runtime options
         if self.mode == "interactive" and hasattr(self.orchestrator, "decision_engine") and self.orchestrator.decision_engine is not None:
@@ -100,7 +109,16 @@ class SimulationService:
         if self.mode != "interactive":
             return {"executed": False, "reason": "not interactive mode"}
         result = self.orchestrator.apply_user_decision(option_id, target)
+        # Capture the DecisionOption object for later consequence application (before any ticks)
+        decision_engine = getattr(self.orchestrator, "decision_engine", None)
+        selected_option_obj = None
+        if decision_engine and hasattr(decision_engine, "_last_generated_options"):
+            for opt in decision_engine._last_generated_options:
+                if opt.id == option_id:
+                    selected_option_obj = opt
+                    break
         # Determine if we should advance the simulation tick:
+
         # - Executed procedures advance (executed=True)
         # - Monitor/Wait actions (action present) also advance
         # - Unknown option (action missing) should not advance
@@ -145,6 +163,18 @@ class SimulationService:
         # Capture intent_id of last executed intent if not already set
         if not intent_id and self.orchestrator.authority.execution_log:
             intent_id = self.orchestrator.authority.execution_log[-1].intent_id
+        # Apply deterministic consequence of the selected action (if any)
+        if selected_option_obj is not None:
+            # Determine current phase identifier (optional, for rule‑specific logic)
+            phase_id = None
+            if getattr(self, "_procedure_phase_objs", None):
+                tick = self.state_proj.current_tick if hasattr(self.state_proj, "current_tick") else 0
+                phase_idx = min(tick, len(self._procedure_phase_objs) - 1)
+                phase_obj = self._procedure_phase_objs[phase_idx]
+                phase_id = getattr(phase_obj, "id", None) or getattr(phase_obj, "title", None)
+            # Apply consequence engine (pure function) and replace world state
+            new_world = apply_consequence(self.orchestrator.world, selected_option_obj, phase_id)
+            self.orchestrator.world = new_world
         # Emit updated state snapshot after decision (and possible tick advance)
         self._push_snapshot_event()
         # Log next options for debugging
@@ -202,6 +232,7 @@ class SimulationService:
         return opts
 
     def get_options(self) -> list[dict]:
+        # Include dynamic actions based on world state and current phase
         # Base options from the decision engine (complication‑driven)
         decision_snap = self.decision_proj.get_snapshot()
         base_opts_raw = decision_snap.get("options", [])
@@ -215,14 +246,26 @@ class SimulationService:
             base_opts = [map_option_to_dto(o).to_dict() for o in base_opts_raw]
         # If no active complication, discard generic monitor/wait fallback options
         if not active_comp:
-            # Keep only non‑monitor/wait options (which would be empty in fallback)
             base_opts = [opt for opt in base_opts if opt.get("id") not in ("monitor", "wait")]
         # Append procedure‑specific options for the current phase
         proc_opts = self._procedure_options()
-        # Avoid duplicate IDs between base and procedure options
+        # Determine current phase identifier (optional, for dynamic rules)
+        phase_id = None
+        if getattr(self, "_procedure_phase_objs", None):
+            tick = self.state_proj.current_tick if hasattr(self.state_proj, "current_tick") else 0
+            phase_idx = min(tick, len(self._procedure_phase_objs) - 1)
+            phase_obj = self._procedure_phase_objs[phase_idx]
+            phase_id = getattr(phase_obj, "id", None) or getattr(phase_obj, "title", None)
+        # Generate dynamic actions based on world hidden_state and phase
+        dynamic_opts = generate_dynamic_options(self.orchestrator.world, phase_id)
+        dynamic_dicts = [opt.to_dict() for opt in dynamic_opts]
+        # Assemble final option list while avoiding duplicate ids
         existing_ids = {opt["id"] for opt in base_opts if isinstance(opt, dict)}
         combined = base_opts + [opt for opt in proc_opts if opt["id"] not in existing_ids]
+        existing_ids.update({opt["id"] for opt in combined})
+        combined += [opt for opt in dynamic_dicts if opt["id"] not in existing_ids]
         return combined
+
 
     def get_summary(self) -> dict:
         state_snap = self.state_proj.get_snapshot()
@@ -297,10 +340,46 @@ class SimulationService:
             recovery_window=recovery_window,
         )
 
+    def _apply_variant(self):
+        """Apply patient variant overrides if configured."""
+        variants = self.procedure.get("patient_variants", []) if self.procedure else []
+        if not variants:
+            return
+        selected = None
+        if self.variant_id:
+            for v in variants:
+                if isinstance(v, dict) and v.get("id") == self.variant_id:
+                    selected = v
+                    break
+            if selected is None:
+                return
+        else:
+            sorted_variants = sorted(variants, key=lambda x: x.get("id", ""))
+            selected = sorted_variants[0] if sorted_variants else None
+        if not selected:
+            return
+        # Apply physiology overrides
+        phys = selected.get("physiology", {})
+        if phys:
+            from scrubin.models.types import Vitals
+            base_dict = self.patient_profile.baseline_vitals.to_dict()
+            merged = {**base_dict, **phys}
+            new_vitals = Vitals.from_dict(merged)
+            self.patient_profile = replace(self.patient_profile, baseline_vitals=new_vitals)
+        # Apply hidden_state overrides
+        hidden = selected.get("hidden_state", {})
+        if hidden:
+            self.orchestrator.world.hidden_state.update(hidden)
+        # Apply complication modifiers
+        comp_mods = selected.get("complication_modifiers", {})
+        if comp_mods:
+            new_cp = {**self.patient_profile.complication_probability, **comp_mods}
+            self.patient_profile = replace(self.patient_profile, complication_probability=new_cp)
+
     @classmethod
-    def create_session(cls, seed: int, profile_name: str, patient_profile_id: str = "standard", mode: str = "autonomous"):
+    def create_session(cls, seed: int, profile_name: str, patient_profile_id: str = "standard", mode: str = "autonomous", procedure_id: str | None = None, variant_id: str | None = None):
         session_id = uuid.uuid4().hex[:12]
-        return cls(session_id, seed, profile_name, patient_profile_id, mode)
+        return cls(session_id, seed, profile_name, patient_profile_id, mode, procedure_id, variant_id)
 
     def reset_session(self):
         # Create a new service instance to replace this one in the manager
@@ -310,5 +389,7 @@ class SimulationService:
             profile_name=self.profile_name,
             patient_profile_id=self.patient_profile_id,
             mode=self.mode,
+            procedure_id=self.procedure_id,
+            variant_id=self.variant_id,
         )
         return new_svc

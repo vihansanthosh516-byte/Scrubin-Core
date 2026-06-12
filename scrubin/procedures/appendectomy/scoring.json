@@ -1,0 +1,21 @@
+{
+  "max_score": 100,
+  "outcome_weights": {
+    "perfect": 1.0,
+    "minor_error": 0.7,
+    "major_error": 0.3,
+    "critical_failure": 0.0
+  },
+  "exit_criteria": {
+    "required_phases_completed": ["phase_closure"],
+    "minimum_score": 65,
+    "no_active_complications": true
+  },
+  "rubric": {
+    "instrument_handling": {"weight": 0.25},
+    "anatomical_identification": {"weight": 0.20},
+    "hemostasis": {"weight": 0.20},
+    "efficiency": {"weight": 0.15},
+    "complication_management": {"weight": 0.20}
+  }
+}

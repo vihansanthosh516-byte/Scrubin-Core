@@ -1,0 +1,11 @@
+{
+  "instruments": [
+    { "id": "grasper", "name": "Laparoscopic Grasper" },
+    { "id": "clip_applier", "name": "Clip Applier" },
+    { "id": "scissors", "name": "Laparoscopic Scissors" },
+    { "id": "suction", "name": "Suction Device" },
+    { "id": "camera", "name": "Laparoscopic Camera (30°)" },
+    { "id": "trocar_5mm", "name": "5 mm Trocar" },
+    { "id": "trocar_12mm", "name": "12 mm Trocar" }
+  ]
+}

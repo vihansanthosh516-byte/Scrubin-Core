@@ -3,6 +3,20 @@ import json
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from typing import List
+from scrubin.procedures.registry import list_procedures as list_procedures_from_registry
+from scrubin.procedures.registry import get_procedure
+from pydantic import BaseModel
+
+class ProcedureInfo(BaseModel):
+    id: str
+    name: str
+
+class VariantInfo(BaseModel):
+    id: str
+    display_name: str
+    description: str
+    difficulty: float
 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -33,6 +47,8 @@ class StartRequest(BaseModel):
     profile: str = "default"
     patient_profile: str = "standard"
     mode: str = "autonomous"
+    procedure_id: str | None = None
+    variant_id: str | None = None
 
 
 class StartResponse(BaseModel):
@@ -124,6 +140,12 @@ def _session_or_404(session_id: str) -> SimulationService:
 
 @app.post("/session/start", response_model=StartResponse)
 def start_session(req: StartRequest):
+    # Existing implementation unchanged
+    
+    # (the body of the function follows as before)
+    # Existing implementation unchanged
+    
+
     if req.mode not in ("autonomous", "interactive"):
         raise HTTPException(status_code=400, detail="mode must be 'autonomous' or 'interactive'")
     session = manager.create(
@@ -131,12 +153,41 @@ def start_session(req: StartRequest):
         profile_name=req.profile,
         patient_profile_id=req.patient_profile,
         mode=req.mode,
+        procedure_id=req.procedure_id,
+        variant_id=req.variant_id,
     )
     return StartResponse(
         session_id=session.session_id,
         patient_profile=session.patient_profile.id,
         mode=session.mode,
     )
+
+# ------------------------------------------------------------
+# Procedure catalog endpoint (data‑driven UI)
+
+@app.get("/procedures", response_model=List[ProcedureInfo])
+def get_procedures():
+    proc_defs = list_procedures_from_registry()
+    out = []
+    for pid, proc in proc_defs.items():
+        name = proc.get("name") or proc.get("display_name") or proc.get("id") or pid
+        out.append({"id": pid, "name": name})
+    return out
+
+@app.get("/procedure_variants", response_model=List[VariantInfo])
+def get_procedure_variants(procedure_id: str = Query(...)):
+    proc = get_procedure(procedure_id)
+    variants = proc.get("patient_variants", [])
+    sorted_variants = sorted(variants, key=lambda v: v.get("id", ""))
+    out = []
+    for v in sorted_variants:
+        out.append({
+            "id": v.get("id", ""),
+            "display_name": v.get("display_name", ""),
+            "description": v.get("description", ""),
+            "difficulty": v.get("difficulty", 0),
+        })
+    return out
 
 
 @app.post("/session/tick", response_model=TickResponse)

@@ -1,0 +1,21 @@
+{
+  "procedure_id": "appendectomy",
+  "display_name": "Appendectomy (Laparoscopic)",
+  "version": "1.0",
+  "difficulty": "Beginner",
+  "default_stress_profile": "MedicalStudent",
+  "estimated_duration_minutes": 45,
+  "category": "General",
+  "specialty": "General Surgery",
+  "description": "Standard laparoscopic removal of the appendix for non‑perforated acute appendicitis.",
+  "patient_prerequisites": {
+    "age_range": [12, 80],
+    "bmi_max": 35,
+    "contraindications": ["severe cardiopulmonary disease", "coagulopathy"]
+  },
+  "or_setup": {
+    "position": "Supine with slight Trendelenburg",
+    "pneumoperitoneum_pressure_mmHg": 12,
+    "monitoring": ["ECG", "NIBP", "SpO2", "ETCO2", "Temperature"]
+  }
+}

@@ -1,0 +1,148 @@
+[
+  {
+    "id": "card_entry_01",
+    "phase": "phase_entry",
+    "title": "Create Pneumoperitoneum",
+    "description": "Insufflate CO₂ to 12 mmHg using a 12 mm trocar.",
+    "prerequisites": [],
+    "anatomical_targets": ["abdominal_wall"],
+    "required_instruments": ["trocar_12mm", "suction"],
+    "expected_action_duration_seconds": 30,
+    "possible_outcomes": [
+      {
+        "id": "pneumo_success",
+        "probability_modifier": 1.0,
+        "physiology_consequences": {"insufflation_pressure": 12},
+        "score_delta": 5,
+        "next_phase": "phase_exposure"
+      },
+      {
+        "id": "pneumo_failure",
+        "probability_modifier": 0.05,
+        "physiology_consequences": {"insufflation_pressure": 0},
+        "complication_triggers": ["insufflation_error"],
+        "score_delta": -10,
+        "next_phase": "phase_entry"
+      }
+    ]
+  },
+  {
+    "id": "card_exposure_01",
+    "phase": "phase_exposure",
+    "title": "Locate Cecum & Appendiceal Base",
+    "description": "Trace the taenia coli to the base of the appendix.",
+    "prerequisites": ["pneumo_success"],
+    "anatomical_targets": ["cecum", "appendix"],
+    "required_instruments": ["grasper", "camera"],
+    "expected_action_duration_seconds": 45,
+    "possible_outcomes": [
+      {
+        "id": "appendix_found",
+        "probability_modifier": 0.90,
+        "physiology_consequences": {"blood_loss": 0},
+        "score_delta": 10,
+        "next_phase": "phase_division"
+      },
+      {
+        "id": "appendix_not_found",
+        "probability_modifier": 0.10,
+        "physiology_consequences": {"blood_loss": 5},
+        "complication_triggers": ["misidentification"],
+        "score_delta": -5,
+        "next_phase": "phase_exposure"
+      }
+    ]
+  },
+  {
+    "id": "card_division_01",
+    "phase": "phase_division",
+    "title": "Clip Mesoappendix",
+    "description": "Apply a 5 mm clip to the mesoappendix before transection.",
+    "prerequisites": ["appendix_found"],
+    "anatomical_targets": ["mesoappendix"],
+    "required_instruments": ["clip_applier", "grasper"],
+    "expected_action_duration_seconds": 20,
+    "possible_outcomes": [
+      {
+        "id": "clip_success",
+        "probability_modifier": 0.95,
+        "physiology_consequences": {"blood_loss": 0},
+        "score_delta": 5,
+        "next_phase": "phase_division"
+      },
+      {
+        "id": "clip_failure",
+        "probability_modifier": 0.05,
+        "physiology_consequences": {"blood_loss": 15},
+        "complication_triggers": ["bleeding"],
+        "score_delta": -10,
+        "next_phase": "phase_division"
+      }
+    ]
+  },
+  {
+    "id": "card_division_02",
+    "phase": "phase_division",
+    "title": "Transect Appendix",
+    "description": "Use laparoscopic scissors to cut the appendix just distal to the applied clip.",
+    "prerequisites": ["clip_success"],
+    "anatomical_targets": ["appendix"],
+    "required_instruments": ["scissors", "grasper"],
+    "expected_action_duration_seconds": 25,
+    "possible_outcomes": [
+      {
+        "id": "transection_success",
+        "probability_modifier": 0.98,
+        "physiology_consequences": {"blood_loss": 0},
+        "score_delta": 10,
+        "next_phase": "phase_closure"
+      },
+      {
+        "id": "transection_spill",
+        "probability_modifier": 0.02,
+        "physiology_consequences": {"blood_loss": 10, "contamination": true},
+        "complication_triggers": ["infection"],
+        "score_delta": -8,
+        "next_phase": "phase_closure"
+      }
+    ]
+  },
+  {
+    "id": "card_closure_01",
+    "phase": "phase_closure",
+    "title": "Place Appendix in Retrieval Bag",
+    "description": "Load the specimen into a sterile endobag and extract through the 12 mm trocar.",
+    "prerequisites": ["transection_success"],
+    "anatomical_targets": ["appendix"],
+    "required_instruments": ["suction", "trocar_12mm"],
+    "expected_action_duration_seconds": 30,
+    "possible_outcomes": [
+      {
+        "id": "bag_success",
+        "probability_modifier": 1.0,
+        "physiology_consequences": {"contamination": false},
+        "score_delta": 5,
+        "next_phase": null
+      }
+    ]
+  },
+  {
+    "id": "card_closure_02",
+    "phase": "phase_closure",
+    "title": "Desufflate & Close Ports",
+    "description": "Release CO₂, close fascial layers, and apply sterile dressings.",
+    "prerequisites": ["bag_success"],
+    "anatomical_targets": ["abdominal_wall"],
+    "required_instruments": ["suture", "trocar_5mm"],
+    "expected_action_duration_seconds": 45,
+    "possible_outcomes": [
+      {
+        "id": "case_complete",
+        "probability_modifier": 1.0,
+        "physiology_consequences": {"blood_loss": 0},
+        "score_delta": 20,
+        "next_phase": null
+      }
+    ]
+  }
+]

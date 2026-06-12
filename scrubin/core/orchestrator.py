@@ -8,6 +8,7 @@ from scrubin.core.ledger import EventLedger
 from scrubin.core.config import ConfigLayer
 from scrubin.execution.authority import ActionAuthority
 from scrubin.models.intents import ActionIntent
+from scrubin.events.action_helper import create_action_event
 from scrubin.patient.profile import PatientProfile, STANDARD_PATIENT
 from scrubin.complications.registry import ComplicationRegistry
 from scrubin.world.model import SimulationWorld
@@ -17,6 +18,7 @@ from scrubin.audit.transitions import TransitionAuditor
 from scrubin.perf.profiler import TickProfiler
 from scrubin.perf.budgets import PerformanceBudgets
 from scrubin.perf.metrics import PerformanceMetrics, TickMetrics
+from scrubin.events.event_queue import EventQueue
 
 
 from scrubin.control_plane.analysis.equilibrium import EquilibriumAnalyzer
@@ -50,6 +52,7 @@ class Orchestrator:
         )
         self.bus.set_authority_token(self.authority.authority_token)
         self.world = SimulationWorld()
+        self.sim_event_queue = EventQueue()
         # Equilibrium analysis, attractor classification, and adaptive controller
         self.equilibrium_analyzer = EquilibriumAnalyzer()
         self.attractor_classifier = AttractorClassifier()
@@ -204,6 +207,14 @@ class Orchestrator:
         prev_mortality = self.world.mortality_risk
 
         self.world.evolve()
+        # Hidden‑state progression now returns events; enqueue them
+        from scrubin.engine.hidden_state_propagation import apply_hidden_state_propagation
+        new_events = apply_hidden_state_propagation(self.world)
+        for ev in new_events:
+            self.sim_event_queue.add(ev)
+        # Process queued events deterministically
+        from scrubin.events.event_processor import process_events
+        self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
 
         # Update Partial Observability
         self.world.observed_vitals = self.observation_engine.get_observed_vitals(self.world.physiology.vitals)
@@ -329,12 +340,24 @@ class Orchestrator:
                     print(f"[Orchestrator] validation rejected: verdict={validation.verdict} confidence={validation.confidence}")
                     return None
 
-        exec_result = self.authority.execute(intent)
-        if exec_result.executed:
+        # Convert the intent into a deterministic Action event and queue it
+        from scrubin.events.action_helper import create_action_event
+        from scrubin.events.event_processor import process_events
+        # Build the event – deterministic id based on tick and intent.id
+        action_event = create_action_event(tick=self.tick_count, intent=intent, source="engine")
+        self.sim_event_queue.add(action_event)
+        # Process the queue (authority will execute the intent inside the processor)
+        self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+        # Determine whether the intent was executed by inspecting the authority log
+        executed = any(
+            ee.intent_id == intent.id and ee.outcome == "executed"
+            for ee in self.authority.execution_log
+        )
+        if executed:
             print(f"[ActionAuthority] tick={self.tick_count} executed={intent.name} for={intent.target}")
         else:
-            print(f"[ActionAuthority] tick={self.tick_count} rejected={intent.name} reason={exec_result.reason}")
-        return intent if exec_result.executed else None
+            print(f"[ActionAuthority] tick={self.tick_count} rejected={intent.name} (not executed)")
+        return intent if executed else None
 
     def reset(self):
         self.tick_count = 0
@@ -347,6 +370,7 @@ class Orchestrator:
         )
         self.bus.set_authority_token(self.authority.authority_token)
         self.world = SimulationWorld()
+        self.sim_event_queue = EventQueue()
         self._pending_signals.clear()
         self.invariant_validator = InvariantValidator(ledger=self.ledger)
         self.snapshot_engine = SnapshotEngine(ledger=self.ledger, invariant_validator=self.invariant_validator)
@@ -377,8 +401,18 @@ class Orchestrator:
                 reasoning=action.get("reasoning", ""),
                 metadata=action.get("metadata", {}),
             )
-            result = self.authority.execute(intent)
-            return {"injected": action_type, "executed": result.executed, "payload": action}
+            # Convert the intent into a deterministic Action event and enqueue it
+            from scrubin.events.action_helper import create_action_event
+            from scrubin.events.event_processor import process_events
+            action_event = create_action_event(tick=self.tick_count, intent=intent, source="inject")
+            self.sim_event_queue.add(action_event)
+            # Process the queued event – authority will execute the intent
+            self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+            executed = any(
+                ee.intent_id == intent.id and ee.outcome == "executed"
+                for ee in self.authority.execution_log
+            )
+            return {"injected": action_type, "executed": executed, "payload": action}
 
         event_type = action_type
         payload = {k: v for k, v in action.items() if k != "type"}
@@ -395,14 +429,25 @@ class Orchestrator:
             return {"executed": False, "reason": f"unknown option: {option_id}"}
 
         if intent.type == "procedure":
-            exec_result = self.authority.execute(intent)
-            if exec_result.executed:
+            # Queue the user decision as an Action event and process it
+            from scrubin.events.action_helper import create_action_event
+            from scrubin.events.event_processor import process_events
+            action_event = create_action_event(tick=self.tick_count, intent=intent, source="user_decision")
+            self.sim_event_queue.add(action_event)
+            # Process the queued event – authority will execute the intent
+            self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+            # Check execution outcome via the authority log
+            executed = any(
+                ee.intent_id == intent.id and ee.outcome == "executed"
+                for ee in self.authority.execution_log
+            )
+            if executed:
                 print(f"[Orchestrator] user decision → procedure={intent.name} for={intent.target}")
                 return {
-                    "executed": exec_result.executed,
+                    "executed": True,
                     "action": intent.name,
                     "target": intent.target,
-                    "reason": exec_result.reason,
+                    "reason": "executed_by_authority",
                 }
 
         self.ledger.log(

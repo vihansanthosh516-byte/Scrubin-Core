@@ -66,6 +66,7 @@ class ProcedurePhase:
     sub_phase: str = ""
     objectives: List[str] = field(default_factory=list)
     required_decisions: List[str] = field(default_factory=list)
+    advancement_rules: List[Constraint] = field(default_factory=list)
     entry_conditions: List[Constraint] = field(default_factory=list)
     completion_conditions: List[Constraint] = field(default_factory=list)
     failure_conditions: List[Constraint] = field(default_factory=list)

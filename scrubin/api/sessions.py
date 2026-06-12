@@ -21,7 +21,7 @@ class SessionManager:
             print(f"[API] session expired id={sid}")
 
     def create(self, seed: int, profile_name: str, patient_profile_id: str = "standard",
-               mode: str = "autonomous") -> SimulationService:
+               mode: str = "autonomous", procedure_id: str | None = None, variant_id: str | None = None) -> SimulationService:
         self._evict_expired()
         
         session = SimulationService.create_session(
@@ -29,6 +29,8 @@ class SessionManager:
             profile_name=profile_name,
             patient_profile_id=patient_profile_id,
             mode=mode,
+            procedure_id=procedure_id,
+            variant_id=variant_id,
         )
         self._sessions[session.session_id] = session
         self._last_access[session.session_id] = time.time()
