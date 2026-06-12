@@ -21,7 +21,7 @@ from scrubin.models.intents import ActionIntent
 from scrubin.engine.procedure import ProcedurePhase
 from scrubin.engine.procedural_phase_engine import ProceduralPhaseEngine
 from scrubin.decision.dynamic_actions import generate_dynamic_options
-from scrubin.decision.consequence_engine import apply_consequence
+from scrubin.decision.consequence_engine import generate_consequence_events
 
 class SimulationService:
     def __init__(self, session_id: str, seed: int, profile_name: str, patient_profile_id: str, mode: str, procedure_id: str | None = None, variant_id: str | None = None):
@@ -172,9 +172,17 @@ class SimulationService:
                 phase_idx = min(tick, len(self._procedure_phase_objs) - 1)
                 phase_obj = self._procedure_phase_objs[phase_idx]
                 phase_id = getattr(phase_obj, "id", None) or getattr(phase_obj, "title", None)
-            # Apply consequence engine (pure function) and replace world state
-            new_world = apply_consequence(self.orchestrator.world, selected_option_obj, phase_id)
-            self.orchestrator.world = new_world
+            # Generate deterministic consequence events and enqueue them
+            from scrubin.decision.consequence_engine import generate_consequence_events
+            from scrubin.events.event_processor import process_events
+            conseq_events = generate_consequence_events(self.orchestrator.world, selected_option_obj, phase_id)
+            for ev in conseq_events:
+                self.orchestrator.sim_event_queue.add(ev)
+            # Process the queued consequence events (authority not needed here)
+            self.orchestrator.world, self.orchestrator.sim_event_queue = process_events(self.orchestrator.world, self.orchestrator.sim_event_queue, authority=self.orchestrator.authority)
+            # Recalculate derived metrics (mortality, SOFA, NEWS2) after applying consequences
+            from scrubin.decision.consequence_engine import _recalculate_derived_metrics
+            _recalculate_derived_metrics(self.orchestrator.world)
         # Emit updated state snapshot after decision (and possible tick advance)
         self._push_snapshot_event()
         # Log next options for debugging
