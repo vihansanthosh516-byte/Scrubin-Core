@@ -59,6 +59,9 @@ class KnowledgeGraph:
 
         Returns a new ``KnowledgeGraph`` with the node inserted in sorted order.
         """
+        # Fast‑path: if there are no nodes, we can add the new node without a linear scan.
+        if not self.nodes:
+            return replace(self, nodes=(node,))
         if any(n.node_id == node.node_id for n in self.nodes):
             return self
         new_nodes = tuple(sorted(self.nodes + (node,), key=lambda n: n.node_id))
@@ -68,6 +71,9 @@ class KnowledgeGraph:
         """Add an edge if the exact ``source_id``/``target_id``/``edge_type`` pair
         is not already present.
         """
+        # Fast‑path: if there are no edges, add directly.
+        if not self.edges:
+            return replace(self, edges=(edge,))
         if any(e.source_id == edge.source_id and e.target_id == edge.target_id and e.edge_type == edge.edge_type for e in self.edges):
             return self
         new_edges = tuple(sorted(self.edges + (edge,), key=lambda e: (e.source_id, e.target_id, e.edge_type)))

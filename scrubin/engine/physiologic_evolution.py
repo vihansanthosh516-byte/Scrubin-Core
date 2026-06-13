@@ -251,6 +251,13 @@ class PhysiologicEvolutionEngine:
         severity ``time_pressure`` complication.
         """
         if world.tick > 30:
+            # Add a single time‑pressure complication the first time the threshold is crossed.
+            # Subsequent ticks should not create duplicate complications, which would cause
+            # the fast‑path to be permanently disabled and lead to quadratic growth in the
+            # heavy cognition/ontology engines.
+            if any(comp.id == "time_pressure" for comp in world.complications.active):
+                # Complication already present – no further action.
+                return world
             comp = ComplicationState(id="time_pressure", severity="mild", onset_tick=world.tick)
             new_comp = world.complications.with_added(comp)
             ev = TimelineEvent(tick=world.tick, description="time_pressure_active")
@@ -281,7 +288,7 @@ class PhysiologicEvolutionEngine:
         # because downstream biology depends on MAP.
         if (
             not world.anatomy.regions
-            and not world.complications.active
+            and (not world.complications.active or (len(world.complications.active) == 1 and world.complications.active[0].id == "time_pressure"))
             and not world.hidden_effects
             and not world.intent_graph.pending_intents()
             and not world.tutoring_state.active_interventions
