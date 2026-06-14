@@ -4,6 +4,9 @@ from typing import Dict, List, Any
 from scrubin.clinical.cognition.diagnostics import HiddenCondition, ClinicalFinding
 from scrubin.physiology.organs.cardiovascular import OrganState
 from scrubin.clinical.resources import ResourceManager
+from scrubin.world.state import ComplicationWorldState, TimelineEvent
+from dataclasses import field
+
 
 @dataclass
 class PhysiologyState:
@@ -95,6 +98,11 @@ class ForecastState:
 
 @dataclass
 class SimulationWorld:
+    # Added deterministic fields for event pipeline compatibility
+    # Complications tracked immutably, with helper methods for event updates
+    complications: ComplicationWorldState = field(default_factory=ComplicationWorldState)
+    # Simple timeline list for mutable world – stores TimelineEvent objects
+    timeline: list[TimelineEvent] = field(default_factory=list)
     tick: int = 0
     
     hidden_state: Dict[str, HiddenCondition] = field(default_factory=dict)
@@ -196,6 +204,8 @@ class SimulationWorld:
         )
     
     def evolve(self):
+        # Original mutable evolution logic retained for backward compatibility.
+        # This method updates the mutable simulation world in‑place.
         from scrubin.world.coupling import SystemCouplingGraph
         from scrubin.clinical.mortality import MortalityModel
         from scrubin.clinical.scoring.sofa import SOFAScore
@@ -230,3 +240,16 @@ class SimulationWorld:
         self.news2_score = NEWS2Score.calculate(vitals)
 
         self.mortality_risk = MortalityModel.evaluate(self)
+
+    def append_timeline(self, events):
+        """Append timeline events to the mutable world.
+
+        ``events`` may be a single ``TimelineEvent`` or an iterable of events.
+        The method mutates ``self.timeline`` and returns ``self`` for chaining.
+        """
+        if isinstance(events, TimelineEvent):
+            self.timeline.append(events)
+        else:
+            self.timeline.extend(events)
+        return self
+

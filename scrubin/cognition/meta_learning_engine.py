@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Deterministic meta‑learning engine – records observations derived from reflections.
 
 The engine reads the ``ReflectionState`` and generates immutable ``LearningObservation``
 entries, storing them in the world ``LearningState``.  It never influences any other
 cognition components; its sole purpose is observational and replay‑safe.
 """
+
+from __future__ import annotations
 
 from dataclasses import replace
 from typing import List

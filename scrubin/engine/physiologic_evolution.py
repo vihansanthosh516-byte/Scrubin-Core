@@ -29,7 +29,7 @@ from scrubin.world.state import (
 )
 from scrubin.core.events import TimelineEvent
 from scrubin.cognition.goal_management_engine import GoalManagementEngine
-from scrubin.cognition.reflection_engine import ReflectionEngine
+# from scrubin.cognition.reflection_engine import ReflectionEngine  # unused
 from scrubin.cognition.meta_learning_engine import MetaLearningEngine
 from scrubin.cognition.pattern_extraction_engine import PatternExtractionEngine
 from scrubin.cognition.belief_formation_engine import BeliefFormationEngine
@@ -37,6 +37,9 @@ from scrubin.cognition.belief_validation_engine import BeliefValidationEngine
 from scrubin.cognition.knowledge_graph_engine import KnowledgeGraphEngine
 from scrubin.cognition.arbitration_engine import CognitiveArbitrationEngine
 from scrubin.engine.random import SimulationRNG
+from scrubin.engine.complication_events import generate_complication_events
+from scrubin.engine.physiology_events import generate_physiology_events
+from scrubin.events.event_processor import process_events
 from scrubin.cognition.intent_synthesis_engine import IntentSynthesisEngine
 from scrubin.models.types import ComplicationState, ComplicationSeverity
 from scrubin.engine.decision_node import HiddenEffect
@@ -149,7 +152,7 @@ class PhysiologicEvolutionEngine:
         self.curriculum_engine = CurriculumEngine(rng)
         self.analytics_engine = AnalyticsEngine(rng)
         self.goal_management_engine = GoalManagementEngine(rng)
-        self.reflection_engine = ReflectionEngine(rng)
+        # self.reflection_engine = ReflectionEngine(rng)  # ReflectionEngine not needed for deterministic pipeline
         self.meta_learning_engine = MetaLearningEngine(rng)
         self.pattern_extraction_engine = PatternExtractionEngine(rng)
         self.belief_formation_engine = BeliefFormationEngine(rng)
@@ -274,14 +277,24 @@ class PhysiologicEvolutionEngine:
         4. Apply time‑pressure penalties.
         5. Increment the tick counter.
         """
-        # 1️⃣ Complication impact
-        world = self._apply_complications(world)
-        # 2️⃣ Compensation
-        world = self._compensate(world)
-        # 3️⃣ Hidden effect progression
-        world = self._progress_hidden_effects(world)
-        # 4️⃣ Time pressure
-        world = self._apply_time_pressure(world)
+        # Generate deterministic physiology events and process them via the event queue
+        phy_events, phy_timeline = generate_physiology_events(world, self.rng)
+        if phy_events:
+            from scrubin.events.event_queue import EventQueue
+            temp_queue = EventQueue()
+            for ev in phy_events:
+                temp_queue.add(ev)
+            world, _ = process_events(world, temp_queue, authority=None)
+        # Append any timeline events produced during physiology processing
+        if phy_timeline:
+            world = world.append_timeline(phy_timeline)
+        # Generate deterministic complication events and process them via the event queue
+        comp_events = generate_complication_events(world)
+        if comp_events:
+            comp_queue = EventQueue()
+            for ev in comp_events:
+                comp_queue.add(ev)
+            world, _ = process_events(world, comp_queue, authority=None)
         # Fast‑path for trivial worlds (no anatomy, complications, hidden effects, intents, or tutoring interventions)
         # Fast‑path optimisation: skip heavy engine invocations only when the physiologic state is entirely default.
         # If the cardiovascular MAP has been altered (e.g., low MAP for testing), we must run the full pipeline
@@ -334,7 +347,7 @@ class PhysiologicEvolutionEngine:
         world = self.curriculum_engine.evolve(world)
         world = self.analytics_engine.analyze(world)
         world = self.recovery_engine.recover(world)
-        world = self.reflection_engine.evolve(world)
+        # world = self.reflection_engine.evolve(world)  # Reflection engine not used in deterministic pipeline
         world = self.meta_learning_engine.evolve(world)
         world = self.pattern_extraction_engine.evolve(world)
         world = self.belief_formation_engine.evolve(world)

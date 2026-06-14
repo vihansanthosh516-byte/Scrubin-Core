@@ -16,10 +16,16 @@ from .event_types import (
     SEPSIS_EVENT,
     HYPOTENSION_EVENT,
     ACTION_EVENT,
+    PHYSIOLOGY_EVENT,
+    COMPLICATION_EVENT,
 )
 
 from scrubin.core.events import TimelineEvent
+from scrubin.world.state import WorldState
 from scrubin.clinical.cognition.diagnostics import HiddenCondition
+from dataclasses import replace, asdict
+from scrubin.models.types import ComplicationState
+from scrubin.engine.decision_node import HiddenEffect
 from scrubin.world.model import SimulationWorld
 
 
@@ -55,6 +61,93 @@ def _apply_event(world: SimulationWorld, ev: SurgicalEvent, authority: Any = Non
         # Example: flag or boolean change – payload may contain a boolean value
         flag = ev.payload.get("value", True)
         world.hidden_state["hypotension"] = flag
+    elif ev.event_type == PHYSIOLOGY_EVENT:
+        payload = ev.payload
+        # Determine if world is immutable (has with_physiology) or mutable.
+        if hasattr(world, "with_physiology"):
+            new_world = world
+            if "physiology" in payload:
+                phys = payload["physiology"]
+                cardio_dict = phys.get("cardiovascular", {})
+                resp_dict = phys.get("respiratory", {})
+                cardio = new_world.physiology.cardiovascular
+                resp = new_world.physiology.respiratory
+                if "map" in cardio_dict:
+                    cardio = cardio.with_map(cardio_dict["map"])
+                if "heart_rate" in cardio_dict:
+                    cardio = cardio.with_heart_rate(cardio_dict["heart_rate"])
+                if "compensation_active" in cardio_dict or "reserve" in cardio_dict:
+                    cardio = cardio.with_compensation(
+                        cardio_dict.get("compensation_active", cardio.compensation_active),
+                        cardio_dict.get("reserve", cardio.reserve),
+                    )
+                if "spo2" in resp_dict:
+                    resp = resp.with_spo2(resp_dict["spo2"])
+                if "compensation_active" in resp_dict or "reserve" in resp_dict:
+                    resp = resp.with_compensation(
+                        resp_dict.get("compensation_active", resp.compensation_active),
+                        resp_dict.get("reserve", resp.reserve),
+                    )
+                new_world = new_world.with_physiology(replace(new_world.physiology, cardiovascular=cardio, respiratory=resp))
+            if "complications" in payload:
+                comp_state = new_world.complications
+                for comp_dict in payload["complications"]:
+                    comp_state = comp_state.with_added(ComplicationState.from_dict(comp_dict))
+                new_world = new_world.with_complications(comp_state)
+            if "hidden_effects" in payload:
+                hidden_objs = tuple(HiddenEffect(**h) for h in payload["hidden_effects"])
+                new_world = new_world.with_hidden_effects(hidden_objs)
+            return new_world
+        # Mutable fallback – same as previous implementation.
+        if "physiology" in payload:
+            phys = payload["physiology"]
+            cardio_dict = phys.get("cardiovascular", {})
+            resp_dict = phys.get("respiratory", {})
+            cardio = world.physiology.cardiovascular
+            resp = world.physiology.respiratory
+            if "map" in cardio_dict:
+                cardio = cardio.with_map(cardio_dict["map"])
+            if "heart_rate" in cardio_dict:
+                cardio = cardio.with_heart_rate(cardio_dict["heart_rate"])
+            if "compensation_active" in cardio_dict or "reserve" in cardio_dict:
+                cardio = cardio.with_compensation(
+                    cardio_dict.get("compensation_active", cardio.compensation_active),
+                    cardio_dict.get("reserve", cardio.reserve),
+                )
+            if "spo2" in resp_dict:
+                resp = resp.with_spo2(resp_dict["spo2"])
+            if "compensation_active" in resp_dict or "reserve" in resp_dict:
+                resp = resp.with_compensation(
+                    resp_dict.get("compensation_active", resp.compensation_active),
+                    resp_dict.get("reserve", resp.reserve),
+                )
+            world.physiology = replace(world.physiology, cardiovascular=cardio, respiratory=resp)
+        if "complications" in payload:
+            for comp_dict in payload["complications"]:
+                comp = ComplicationState.from_dict(comp_dict)
+                world.complications = world.complications.with_added(comp)
+        if "hidden_effects" in payload:
+            hidden_objs = tuple(HiddenEffect(**h) for h in payload["hidden_effects"])
+            world.hidden_effects = hidden_objs
+        return world
+    elif ev.event_type == COMPLICATION_EVENT:
+        payload = ev.payload
+        comp_id = payload.get("complication")
+        severity = payload.get("severity", "moderate")
+        # Determine if immutable world
+        if hasattr(world, "with_complications"):
+            new_world = world
+            # Create ComplicationState (onset_tick is current tick)
+            comp = ComplicationState(id=comp_id, severity=severity, onset_tick=world.tick)
+            new_world = new_world.with_complications(new_world.complications.with_added(comp))
+            # Append timeline entry
+            new_world = new_world.append_timeline(TimelineEvent(tick=world.tick, description=f"complication_detected:{comp_id}"))
+            return new_world
+        # Mutable fallback
+        comp = ComplicationState(id=comp_id, severity=severity, onset_tick=world.tick)
+        world.complications = world.complications.with_added(comp)
+        world = world.append_timeline(TimelineEvent(tick=world.tick, description=f"complication_detected:{comp_id}"))
+        return world
     elif ev.event_type == ACTION_EVENT:
         # User action event – delegate to ActionAuthority
         intent_data = ev.payload.get("intent")

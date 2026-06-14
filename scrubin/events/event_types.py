@@ -17,5 +17,8 @@ INFLAMMATION_EVENT = "inflammation_event"
 SEPSIS_EVENT = "sepsis_event"
 # Hypotension flag
 HYPOTENSION_EVENT = "hypotension_event"
+# Physiology‑related changes
+PHYSIOLOGY_EVENT = "physiology_event"
 # Generic placeholder for any other events that may be added later
+COMPLICATION_EVENT = "complication_event"
 # (e.g., thermal_injury_event, contamination_event, etc.)

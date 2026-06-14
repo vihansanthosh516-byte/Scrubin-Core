@@ -19,6 +19,61 @@ from scrubin.perf.profiler import TickProfiler
 from scrubin.perf.budgets import PerformanceBudgets
 from scrubin.perf.metrics import PerformanceMetrics, TickMetrics
 from scrubin.events.event_queue import EventQueue
+from scrubin.cognition.memory_store import MemoryStore
+from scrubin.cognition.fact_store import FactStore
+from scrubin.cognition.belief_store import BeliefStore
+from scrubin.cognition.reflection_store import ReflectionStore
+from scrubin.cognition.reflection_engine import update_reflections_from_beliefs
+from scrubin.cognition.belief_engine import update_beliefs_from_facts
+from scrubin.cognition.memory_encoder import encode_events_to_episode
+from scrubin.events import event_types
+from scrubin.cognition.graph_store import GraphStore
+from scrubin.cognition.graph_builder import update_graph
+from scrubin.cognition.meta_store import MetaStore
+from scrubin.cognition.meta_pattern_engine import update_meta_patterns
+from scrubin.cognition.cognitive_pipeline import run_cognitive_pipeline
+from scrubin.planner.plan_store import PlanStore
+from scrubin.planner.long_horizon_planner import LongHorizonPlanner
+from scrubin.events.event import SurgicalEvent
+from scrubin.cognition.counterfactual import CounterfactualResult
+from scrubin.cognition.counterfactual_store import CounterfactualStore
+from scrubin.cognition.counterfactual_engine import run_counterfactual as _run_counterfactual
+from scrubin.cognition.counterfactual import CounterfactualScenario
+from scrubin.cognition.executive_goal import ExecutiveGoal
+from scrubin.cognition.executive_store import ExecutiveStore
+from scrubin.cognition.executive_engine import update_executive
+from scrubin.cognition.priority_engine import compute_priority
+from scrubin.cognition.executive_scheduler import schedule_goals
+from scrubin.cognition.executive_monitor import monitor_goals
+from scrubin.cognition.strategy_selection_store import StrategySelectionStore
+from scrubin.cognition.strategy_selection_engine import update_strategy_selection
+from scrubin.cognition.executive_evaluation_store import ExecutiveEvaluationStore
+from scrubin.cognition.executive_evaluation_engine import update_executive_evaluations
+from scrubin.cognition.policy_refinement import run_policy_refinement
+from scrubin.cognition.bias_plan_store import BiasPlanStore
+from scrubin.cognition.bias_planner_engine import update_bias_plan_candidates
+from scrubin.cognition.executive_ranking import compute_executive_ranking
+from scrubin.cognition.strategy_store import StrategyStore
+from scrubin.cognition.policy_store import PolicyStore
+from scrubin.cognition.policy_optimization_engine import update_policy_profiles
+from scrubin.cognition.strategy_bias_engine import generate_strategy_bias
+from scrubin.cognition.strategy_engine import update_strategies
+from scrubin.cognition.executive_feedback_store import ExecutiveFeedbackStore
+from scrubin.cognition.executive_feedback_engine import update_executive_feedback
+from scrubin.cognition.executive_adaptation import generate_adaptation_signals
+from scrubin.cognition.adaptation_store import AdaptationStore
+from scrubin.cognition.adaptation_engine import update_adaptation_profiles
+from scrubin.cognition.adaptation_bias_engine import generate_adaptation_biases
+from scrubin.cognition.executive_optimization_store import ExecutiveOptimizationStore
+from scrubin.cognition.executive_optimization_engine import update_executive_optimizations
+from scrubin.cognition.executive_self_improvement_engine import generate_self_improvement_signals
+from scrubin.cognition.executive_policy_engine import update_executive_policy
+from scrubin.cognition.executive_policy_store import ExecutivePolicyStore
+from scrubin.cognition.predictive_store import PredictiveStore
+
+from scrubin.engine.physiology_events import generate_physiology_events
+from scrubin.decision.consequence_engine import _recalculate_derived_metrics
+from scrubin.engine.complication_events import generate_complication_events
 
 
 from scrubin.control_plane.analysis.equilibrium import EquilibriumAnalyzer
@@ -52,7 +107,27 @@ class Orchestrator:
         )
         self.bus.set_authority_token(self.authority.authority_token)
         self.world = SimulationWorld()
+        self.memory_store = MemoryStore()
+        self.fact_store = FactStore()
+        self.belief_store = BeliefStore()
+        self.reflection_store = ReflectionStore()
         self.sim_event_queue = EventQueue()
+        self.graph_store = GraphStore()
+        self.meta_store = MetaStore()
+        self.plan_store = PlanStore()
+        self.long_horizon_planner = LongHorizonPlanner(plan_store=self.plan_store)
+        self.executive_store = ExecutiveStore()
+        self.strategy_store = StrategyStore()
+        self.strategy_selection_store = StrategySelectionStore()
+        self.policy_store = PolicyStore()
+        self.executive_evaluation_store = ExecutiveEvaluationStore()
+        self.bias_plan_store = BiasPlanStore()
+        self.adaptation_store = AdaptationStore()
+        self.executive_optimization_store = ExecutiveOptimizationStore()
+        self.executive_policy_store = ExecutivePolicyStore()
+        self.predictive_store = PredictiveStore()
+        self.predictive_store = PredictiveStore()
+        self.executive_feedback_store = ExecutiveFeedbackStore()
         # Equilibrium analysis, attractor classification, and adaptive controller
         self.equilibrium_analyzer = EquilibriumAnalyzer()
         self.attractor_classifier = AttractorClassifier()
@@ -69,6 +144,8 @@ class Orchestrator:
         self.perf_budgets = PerformanceBudgets()
         self.perf_metrics = PerformanceMetrics(ledger=self.ledger)
         self.scenario_config = scenario_config
+        self.counterfactual_store = CounterfactualStore()
+        self.graph_store = GraphStore()
         
         # Diagnostics & Observability
         from scrubin.diagnostics.sensors import ObservationEngine
@@ -183,6 +260,105 @@ class Orchestrator:
                     print(f"[DecisionEngine] - {o['id']}: {o['label']} (risk={o['risk_level']}, target={o.get('target_complication', '')})")
                 decision_output = {"options": options_dicts}
 
+        # Meta‑learning aggregation – generate deterministic meta‑patterns
+        # Deterministic meta‑pattern aggregation
+        update_meta_patterns(
+            reflection_store=self.reflection_store,
+            counterfactual_store=self.counterfactual_store,
+            knowledge_graph=self.graph_store,
+            meta_store=self.meta_store,
+        )
+        # Deterministic long‑horizon planning is deferred until after predictive state generation
+        # The planner will be invoked later using executive policy decisions and predictive states.
+
+        # Executive update – generate deterministic goals from meta‑patterns, beliefs, and plans
+        update_executive(self.meta_store, self.belief_store, self.plan_store, self.executive_store)
+        # Schedule pending goals deterministically
+        scheduled_goals = schedule_goals(self.executive_store, self.tick_count)
+        # Monitor and update goal statuses based on world progress
+        monitor_goals(self.tick_count, self.executive_store, self.plan_store, scheduled_goals)
+        update_strategies(self.plan_store, self.executive_store, self.strategy_store)
+        update_strategy_selection(self.executive_store, self.strategy_store, self.belief_store, self.reflection_store, self.strategy_selection_store)
+        # Run full deterministic cognitive pipeline (graph, meta, executive) for audit
+        update_executive_evaluations(self.strategy_selection_store, self.executive_store, self.plan_store, self.strategy_store, self.belief_store, self.reflection_store, self.counterfactual_store, self.executive_evaluation_store)
+        policy_recommendations = run_policy_refinement(self.executive_evaluation_store, self.strategy_store)
+        # Update policy profiles based on executive evaluations
+        update_policy_profiles(self.executive_evaluation_store, self.strategy_store, self.strategy_selection_store, self.policy_store)
+        # Generate strategy bias from policy profiles
+        self.strategy_biases = generate_strategy_bias(self.policy_store)
+        update_bias_plan_candidates(
+            self.executive_store,
+            self.strategy_store,
+            self.strategy_selection_store,
+            self.policy_store,
+            self.strategy_biases,
+            self.bias_plan_store,
+        )
+        self.executive_rankings = compute_executive_ranking(self.bias_plan_store)
+        # Executive feedback loop – evaluate bias-aware planning outcomes
+        update_executive_feedback(
+            self.executive_evaluation_store,
+            self.policy_store,
+            self.bias_plan_store,
+            self.executive_feedback_store,
+        )
+        # Generate adaptation signals based on feedback
+        self.adaptation_signals = generate_adaptation_signals(self.executive_feedback_store)
+        # Update persistent adaptation profiles from feedback
+        update_adaptation_profiles(
+            self.executive_feedback_store,
+            self.policy_store,
+            self.adaptation_store,
+        )
+        # Generate adaptation biases for downstream planning
+        self.adaptation_biases = generate_adaptation_biases(self.adaptation_store)
+        self.self_improvement_signals = generate_self_improvement_signals(self.executive_optimization_store)
+        # Executive policy arbitration – decide final strategy for each goal
+        update_executive_policy(
+            self.executive_store,
+            self.strategy_selection_store,
+            self.policy_store,
+            self.adaptation_store,
+            self.executive_optimization_store,
+            self.strategy_store,
+            self.self_improvement_signals,
+            self.executive_policy_store,
+        )
+        self.executive_policy_decisions = self.executive_policy_store.decisions
+        # Generate deterministic predictive states for future horizons
+        from scrubin.cognition.predictive_engine import update_predictive_states
+        update_predictive_states(
+            executive_policy_store=self.executive_policy_store,
+            counterfactual_store=self.counterfactual_store,
+            graph_store=self.graph_store,
+            adaptation_store=self.adaptation_store,
+            policy_store=self.policy_store,
+            predictive_store=self.predictive_store,
+        )
+        # Deterministic long‑horizon planning using executive policy decisions
+        actions = [
+            {
+                "action_id": decision.id,
+                "action_name": decision.selected_strategy_id,
+                "expected_reward": decision.arbitration_score,
+                "confidence": decision.confidence,
+            }
+            for decision in self.executive_policy_store.decisions
+        ]
+        self.long_horizon_planner.generate_plan(self.tick_count, actions)
+        run_cognitive_pipeline(
+            self.world,
+            self.memory_store,
+            self.fact_store,
+            self.belief_store,
+            self.reflection_store,
+            self.graph_store,
+            self.counterfactual_store,
+            self.meta_store,
+            self.plan_store,
+            self.executive_store,
+        )
+        
         profile = self.profiler.end_tick()
         self.perf_metrics.record_tick(TickMetrics(
             tick=profile.tick,
@@ -203,33 +379,87 @@ class Orchestrator:
 
     def _evolve_world(self):
         prev_state = self.world.to_dict()
-        vitals = self.world.physiology.vitals
         prev_mortality = self.world.mortality_risk
 
-        self.world.evolve()
-        # Hidden‑state progression now returns events; enqueue them
-        from scrubin.engine.hidden_state_propagation import apply_hidden_state_propagation
-        new_events = apply_hidden_state_propagation(self.world)
-        for ev in new_events:
+        # ---------- Deterministic physiology evolution ----------
+        # Build an immutable WorldState snapshot required by the physiology engine.
+        from scrubin.world.state import WorldState, PhysiologicalState, CardiovascularState, RespiratoryState, ComplicationWorldState
+        vitals = self.world.physiology.vitals
+        cardio = CardiovascularState(
+            map=vitals.get("map", 100.0),
+            heart_rate=vitals.get("heart_rate", 80.0),
+        )
+        resp = RespiratoryState(
+            spo2=vitals.get("spo2", 98.0),
+        )
+        phys_state = PhysiologicalState(vitals=vitals, cardiovascular=cardio, respiratory=resp)
+        immutable_world = WorldState(
+            tick=self.world.tick,
+            physiology=phys_state,
+            complications=ComplicationWorldState(),
+            hidden_effects=tuple(),
+        )
+        # Generate physiology events (including hidden‑effect progression and time‑pressure)
+        phy_events, phy_timeline = generate_physiology_events(immutable_world, SimulationRNG(self.seed))
+
+        # Enqueue physiology events
+        for ev in phy_events:
             self.sim_event_queue.add(ev)
-        # Process queued events deterministically
+
+        # Process physiology events
         from scrubin.events.event_processor import process_events
         self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
 
-        # Update Partial Observability
+        # Append any timeline events produced by physiology processing
+        if phy_timeline:
+            self.world.append_timeline(phy_timeline)
+
+        # ---------- Hidden‑state propagation ----------
+        from scrubin.engine.hidden_state_propagation import apply_hidden_state_propagation
+        hidden_events = apply_hidden_state_propagation(self.world)
+        for ev in hidden_events:
+            self.sim_event_queue.add(ev)
+        # Process hidden‑state events
+        self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+
+        # ---------- Complication generation ----------
+        comp_events = generate_complication_events(self.world)
+        for ev in comp_events:
+            self.sim_event_queue.add(ev)
+        # Process complication events
+        self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+
+        # Recalculate derived clinical metrics (mortality, SOFA, NEWS2)
+        _recalculate_derived_metrics(self.world)
+
+        # ---------- Episodic Memory Encoding ----------
+        # Combine deterministic events generated this tick
+        events_this_tick = phy_events + hidden_events + comp_events
+        episode = encode_events_to_episode(events_this_tick, self.world, self.tick_count)
+        self.memory_store.add_episode(episode)
+        # Update semantic facts from the new episode
+        from scrubin.cognition.fact_builder import process_episode
+        process_episode(episode, self.fact_store)
+        # Update reflections from the updated belief store
+        from scrubin.cognition.reflection_engine import update_reflections_from_beliefs
+        update_reflections_from_beliefs(self.belief_store, self.reflection_store)
+
+        # ---------- Observability ----------
         self.world.observed_vitals = self.observation_engine.get_observed_vitals(self.world.physiology.vitals)
         newly_completed = self.world.diagnostic_queue.update(self.tick_count)
         for task in newly_completed:
             self.bus.publish("diagnostic_result", task.to_dict())
 
+        # ---------- Validation ----------
         self.profiler.start_phase("validator")
         self.invariant_validator.validate(self.world)
         self.profiler.end_phase("validator")
 
+        # ---------- Auditing ----------
         self.profiler.start_phase("audit")
         self.transition_auditor.record(
             tick=self.tick_count,
-            source_event="world.evolve",
+            source_event="world.evolve_deterministic",
             affected_system="simulation_world",
             before=prev_state,
             after=self.world.to_dict(),
@@ -265,22 +495,19 @@ class Orchestrator:
             if res.available == 0:
                 self.bus.publish("resource_exhaustion", {"resource": res_name, "tick": self.tick_count})
         
-    def _apply_control(self):
-        """Apply the latest control signal to the world state.
+    # 6. Meta‑learning aggregation – deterministic pattern extraction
+    
 
-        Simple deterministic adjustments affect mortality risk and vitals.
+    def _apply_control(self):
+        """Apply control signal – currently a no‑op placeholder.
+
+        To keep the orchestrator fully deterministic via the event pipeline, any
+        state adjustments driven by the control signal should be emitted as
+        deterministic events. This implementation is intentionally empty until a
+        dedicated CONTROL_EVENT is defined and handled in the event processor.
         """
-        cs = self._control_signal
-        # Adjust mortality risk as a proxy for overall stability
-        self.world.mortality_risk = max(0.0, self.world.mortality_risk + cs.stability_bias)
-        self.world.mortality_risk *= (1.0 - cs.damping_factor)
-        # Exploration boost adds a dummy "exploration" vital
-        if cs.exploration_boost:
-            self.world.physiology.vitals["exploration"] = (
-                self.world.physiology.vitals.get("exploration", 0.0) + cs.exploration_boost
-            )
-        # Store adversary pressure scaling for potential downstream use
-        self._adversary_scale = cs.adversary_scale
+        # No direct state mutation performed here.
+        pass
 
     def _generate_and_execute_intent(self) -> ActionIntent | None:
         if not self._pending_signals:
@@ -370,7 +597,27 @@ class Orchestrator:
         )
         self.bus.set_authority_token(self.authority.authority_token)
         self.world = SimulationWorld()
+        self.memory_store = MemoryStore()
+        self.fact_store = FactStore()
+        self.belief_store = BeliefStore()
+        self.reflection_store = ReflectionStore()
         self.sim_event_queue = EventQueue()
+        self.graph_store = GraphStore()
+        self.meta_store = MetaStore()
+        self.plan_store = PlanStore()
+        self.long_horizon_planner = LongHorizonPlanner(plan_store=self.plan_store)
+        self.executive_store = ExecutiveStore()
+        self.strategy_store = StrategyStore()
+        self.strategy_selection_store = StrategySelectionStore()
+        self.policy_store = PolicyStore()
+        self.executive_evaluation_store = ExecutiveEvaluationStore()
+        self.bias_plan_store = BiasPlanStore()
+        self.adaptation_store = AdaptationStore()
+        self.executive_optimization_store = ExecutiveOptimizationStore()
+        self.executive_policy_store = ExecutivePolicyStore()
+        self.predictive_store = PredictiveStore()
+        self.predictive_store = PredictiveStore()
+        self.executive_feedback_store = ExecutiveFeedbackStore()
         self._pending_signals.clear()
         self.invariant_validator = InvariantValidator(ledger=self.ledger)
         self.snapshot_engine = SnapshotEngine(ledger=self.ledger, invariant_validator=self.invariant_validator)
@@ -380,6 +627,8 @@ class Orchestrator:
         self.perf_metrics = PerformanceMetrics(ledger=self.ledger)
         if self.decision_engine is not None:
             self.decision_engine._decision_log.clear()
+            self.counterfactual_store = CounterfactualStore()
+            self.graph_store = GraphStore()
 
     def inject_action(self, action: dict):
         action_type = action.get("type", "unknown")
@@ -471,3 +720,25 @@ class Orchestrator:
             {"tick": at_tick or self.tick_count, "complication": complication, "severity": severity},
         )
         return {"forced": complication, "severity": severity, "at_tick": at_tick or self.tick_count}
+    def run_counterfactual(self, source_episode_id: str, hypothetical_event: SurgicalEvent) -> CounterfactualResult:
+        '''Execute a deterministic counterfactual scenario based on a hypothetical event.
+
+        The scenario is stored in ``self.counterfactual_store`` and the result is returned.
+        '''
+        scenario = CounterfactualScenario.create(
+            source_episode_id=source_episode_id,
+            starting_tick=self.world.tick,
+            hypothetical_event=hypothetical_event,
+            confidence=1.0,
+        )
+        result = _run_counterfactual(
+            scenario=scenario,
+            world_snapshot=self.world,
+            memory_store=self.memory_store,
+            fact_store=self.fact_store,
+            belief_store=self.belief_store,
+            reflection_store=self.reflection_store,
+            graph_store=self.graph_store,
+        )
+        self.counterfactual_store.add(scenario, result)
+        return result
