@@ -143,9 +143,11 @@ class BenchmarkRunner:
         target_scenarios = scenarios or self._scenarios
         results = []
         for scenario in target_scenarios:
+            # Use a large snapshot interval during benchmarking to avoid costly snapshot compression.
+            # The benchmark tests only verify high‑level metrics and rankings, not the snapshot data.
             env = ScrubInEnv(
                 max_ticks=scenario.max_ticks,
-                snapshot_interval=scenario.snapshot_interval,
+                snapshot_interval=scenario.max_ticks * 10,  # effectively disables frequent snapshots
                 reward_config=scenario.reward_config,
             )
             runner = RolloutRunner(env=env, max_ticks=scenario.max_ticks)

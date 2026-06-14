@@ -1,4 +1,5 @@
 import uuid
+from scrubin.compiler.execution_compiler import compile_execution_plan
 from typing import Any
 
 from scrubin.core.bus import EventBus
@@ -399,42 +400,53 @@ class Orchestrator:
             complications=ComplicationWorldState(),
             hidden_effects=tuple(),
         )
-        # Generate physiology events (including hidden‑effect progression and time‑pressure)
-        phy_events, phy_timeline = generate_physiology_events(immutable_world, SimulationRNG(self.seed))
+# Generate all deterministic events for this tick and process them in a single pass
+# 1. Physiology events (including timeline)
+phy_events, phy_timeline = generate_physiology_events(immutable_world, SimulationRNG(self.seed))
 
-        # Enqueue physiology events
-        for ev in phy_events:
-            self.sim_event_queue.add(ev)
+# 2. Disease progression events
+from scrubin.physiology.disease_progression import DiseaseProgressionEngine
+disease_engine = DiseaseProgressionEngine()
+disease_events = disease_engine.generate_events(self.world)
 
-        # Process physiology events
-        from scrubin.events.event_processor import process_events
-        self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+# 3. Medication PK/PD events
+from scrubin.physiology.pkpd_engine import PKPDEngine
+pkpd_engine = PKPDEngine()
+pkpd_events = pkpd_engine.generate_events(self.world)
 
-        # Append any timeline events produced by physiology processing
+# 4. Hidden‑state propagation events
+from scrubin.engine.hidden_state_propagation import apply_hidden_state_propagation
+hidden_events = apply_hidden_state_propagation(self.world)
+
+# 5. Complication generation events
+comp_events = generate_complication_events(self.world)
+
+# Consolidate events preserving the original order
+all_events = []
+all_events.extend(phy_events)
+all_events.extend(disease_events)
+all_events.extend(pkpd_events)
+all_events.extend(hidden_events)
+all_events.extend(comp_events)
+
+# Enqueue events
+for ev in all_events:
+    self.sim_event_queue.add(ev)
+
+# Process the accumulated events once
+from scrubin.events.event_processor import process_events
+self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+
+# Apply any physiology timeline events after processing (they are not part of the event queue)
         if phy_timeline:
-            self.world.append_timeline(phy_timeline)
-
-        # ---------- Hidden‑state propagation ----------
-        from scrubin.engine.hidden_state_propagation import apply_hidden_state_propagation
-        hidden_events = apply_hidden_state_propagation(self.world)
-        for ev in hidden_events:
-            self.sim_event_queue.add(ev)
-        # Process hidden‑state events
-        self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
-
-        # ---------- Complication generation ----------
-        comp_events = generate_complication_events(self.world)
-        for ev in comp_events:
-            self.sim_event_queue.add(ev)
-        # Process complication events
-        self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
+    self.world.append_timeline(phy_timeline)
 
         # Recalculate derived clinical metrics (mortality, SOFA, NEWS2)
         _recalculate_derived_metrics(self.world)
 
         # ---------- Episodic Memory Encoding ----------
         # Combine deterministic events generated this tick
-        events_this_tick = phy_events + hidden_events + comp_events
+        events_this_tick = all_events
         episode = encode_events_to_episode(events_this_tick, self.world, self.tick_count)
         self.memory_store.add_episode(episode)
         # Update semantic facts from the new episode

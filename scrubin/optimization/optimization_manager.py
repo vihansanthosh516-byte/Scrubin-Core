@@ -93,7 +93,7 @@ class OptimizationManager:
         overall_hash = hashlib.sha256(hash_bytes).hexdigest()
 
         # 8. Result metadata
-        metadata = OptimizationMetadata(created_at=datetime.datetime.utcnow().isoformat())
+        metadata = OptimizationMetadata(created_at=datetime.datetime.now(datetime.UTC).isoformat())
 
         # 9. Assemble result
         result = OptimizationResult(

@@ -62,7 +62,7 @@ class ExperimentPlanner:
         planning_hash = hashlib.sha256(hash_input).hexdigest()
 
         # 7. Assemble metadata.
-        metadata_obj = PlannerMetadata(created_at=datetime.datetime.utcnow().isoformat())
+        metadata_obj = PlannerMetadata(created_at=datetime.datetime.now(datetime.UTC).isoformat())
 
         # 8. Parameter summary.
         param_summary = {k: len(v) for k, v in param_grid.items()}
