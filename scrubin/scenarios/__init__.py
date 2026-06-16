@@ -1,23 +1,8 @@
-from scrubin.scenarios.dsl import (
-    ScenarioParser,
-    ScenarioCompiler,
-    ScenarioSerializer,
-    ScenarioRegistry,
-    ScenarioConfig,
-    ScenarioPatientConfig,
-    ScenarioHospitalConfig,
-    ScenarioComplication,
-    register_canonical_scenarios,
-)
+"""Scenario package – deterministic, immutable procedure definitions.
 
-__all__ = [
-    "ScenarioParser",
-    "ScenarioCompiler",
-    "ScenarioSerializer",
-    "ScenarioRegistry",
-    "ScenarioConfig",
-    "ScenarioPatientConfig",
-    "ScenarioHospitalConfig",
-    "ScenarioComplication",
-    "register_canonical_scenarios",
-]
+Provides the :class:`ScenarioRegistry` for loading, validating, and hashing
+scenario definitions.  All scenarios are pure data – the simulation engine
+consumes them without any procedural branching logic.
+"""
+
+from .registry import ScenarioRegistry

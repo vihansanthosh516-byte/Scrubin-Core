@@ -35,8 +35,10 @@ class SnapshotStore:
 
     def save_snapshot(self, session_id: str, world: WorldState) -> None:
         path = self._path(session_id)
-        # ``WorldState`` is already JSON‑serialisable via its ``asdict`` representation.
-        data = json.dumps(asdict(world), sort_keys=True, separators=(",", ":"))
+        # ``WorldState`` is serialized without ``deterministic_id`` fields.
+        from .serialization import serialize_world
+        data_dict = serialize_world(world)
+        data = json.dumps(data_dict, sort_keys=True, separators=(",", ":"))
         with open(path, "w", encoding="utf-8") as f:
             f.write(data)
 

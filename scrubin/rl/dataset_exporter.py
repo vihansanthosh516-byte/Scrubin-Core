@@ -1,0 +1,6 @@
+'''Deterministic offline RL dataset exporter – placeholder implementation.'''\n\nfrom __future__ import annotations\nimport json\nfrom typing import List, Tuple, Any\n\ndef export_dataset(replay_log: List[Any], env_snapshots: List[Any], rewards: List[Any], file_path: str) -> None:\n    """Export a deterministic offline RL dataset to JSON.
+\n    The dataset is a list of tuples: (observation, action, reward, next_observation, done).
+    This placeholder writes the raw inputs as JSON – in a full implementation the
+    structures would be transformed into the required format.
+    """
+    dataset = []\n    for i in range(len(env_snapshots) - 1):\n        obs = env_snapshots[i].to_dict() if hasattr(env_snapshots[i], "to_dict") else env_snapshots[i]\n        next_obs = env_snapshots[i + 1].to_dict() if hasattr(env_snapshots[i + 1], "to_dict") else env_snapshots[i + 1]\n        action = None  # Placeholder – action extraction not implemented\n        reward = rewards[i].total_reward if hasattr(rewards[i], "total_reward") else rewards[i]\n        done = i == len(env_snapshots) - 2\n        dataset.append((obs, action, reward, next_obs, done))\n    with open(file_path, "w", encoding="utf-8") as f:\n        json.dump(dataset, f, ensure_ascii=False, indent=2)\n

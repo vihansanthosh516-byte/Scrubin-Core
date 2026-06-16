@@ -156,10 +156,11 @@ class ScrubInEnv:
         return self._tensor_encoder.encode(world)
 
     def _copy_world(self) -> SimulationWorld:
+        # The world state is immutable; a deep copy is unnecessary for reward shaping.
+        # Returning the reference directly avoids costly serialization/deserialization.
         if self._orchestrator is None:
             return SimulationWorld()
-        d = self._orchestrator.world.to_dict()
-        return SimulationWorld.from_dict(d)
+        return self._orchestrator.world
 
     @property
     def observation_dim(self) -> int:

@@ -72,6 +72,33 @@ def _stage_pkpd(orch) -> None:
     for ev in pkpd_events:
         orch.sim_event_queue.add(ev)
 
+def _stage_pkpd_v2(orch) -> None:
+    """Generate deterministic PK/PD v2 events (advanced two‑compartment model)."""
+    from scrubin.physiology.pkpd_engine_v2 import PKPDv2Engine
+    pkpd_engine = PKPDv2Engine()
+    pkpd_events = pkpd_engine.generate_events(orch.world)
+    orch._last_events.extend(pkpd_events)
+    for ev in pkpd_events:
+        orch.sim_event_queue.add(ev)
+
+def _stage_hemodynamics(orch) -> None:
+    """Generate deterministic hemodynamics events (preload, afterload, CO, baroreflex)."""
+    from scrubin.physiology.hemodynamics_engine import HemodynamicsEngine
+    hemo_engine = HemodynamicsEngine()
+    hemo_events = hemo_engine.generate_events(orch.world)
+    orch._last_events.extend(hemo_events)
+    for ev in hemo_events:
+        orch.sim_event_queue.add(ev)
+
+def _stage_multi_disease_interaction(orch) -> None:
+    """Generate deterministic multi‑disease interaction events."""
+    from scrubin.physiology.multi_disease_interaction import MultiDiseaseInteractionEngine
+    engine = MultiDiseaseInteractionEngine()
+    md_events = engine.generate_events(orch.world)
+    orch._last_events.extend(md_events)
+    for ev in md_events:
+        orch.sim_event_queue.add(ev)
+
 
 def _stage_hidden(orch) -> None:
     """Generate hidden‑state propagation events.
@@ -91,6 +118,77 @@ def _stage_complication(orch) -> None:
     orch._last_events.extend(comp_events)
     for ev in comp_events:
         orch.sim_event_queue.add(ev)
+
+# ---------------------------------------------------------------------------
+# Hospital and agent stages – placeholders for deterministic logic (5.3.4‑5.3.5)
+# ---------------------------------------------------------------------------
+
+def _stage_hospital_resources(orch) -> None:
+    """Compute deterministic resource snapshot for the current tick.
+    """
+    from scrubin.hospital.resource_registry import compute_resource_snapshot
+    # Use previous snapshot if available for delta calculation
+    prev = getattr(orch, "resource_snapshot", None)
+    snapshot, deltas = compute_resource_snapshot(orch.world, previous_snapshot=prev)
+    orch.resource_snapshot = snapshot
+    orch.resource_deltas = deltas
+    # No events generated at this stage
+
+
+def _stage_ed_dynamics(orch) -> None:
+    """Compute deterministic ED dynamics based on the resource snapshot.
+    """
+    from scrubin.hospital.ed_dynamics import compute_ed_dynamics
+    # Ensure resource_snapshot exists – if not, compute a minimal one
+    if not hasattr(orch, "resource_snapshot"):
+        from scrubin.hospital.resource_registry import compute_resource_snapshot
+        orch.resource_snapshot, _ = compute_resource_snapshot(orch.world)
+    orch.ed_state = compute_ed_dynamics(orch.resource_snapshot)
+    # No events generated
+
+
+def _stage_icu_allocation(orch) -> None:
+    """Deterministic ICU allocation – placeholder that denies all transfers.
+    """
+    from scrubin.hospital.icu_allocation import allocate_icu_beds
+    # Placeholder transfer queue – empty for now
+    approvals, denials = allocate_icu_beds(orch.resource_snapshot, [])
+    orch.icu_approvals = approvals
+    orch.icu_denials = denials
+    # No events generated
+
+
+def _stage_triage_queue(orch) -> None:
+    """Deterministic triage processing – placeholder with no incoming patients.
+    """
+    from scrubin.hospital.triage_queue import process_triage
+    # Placeholder empty incoming list; staff_snapshot not used in stub
+    orch.triage_assignments = process_triage([], orch.resource_snapshot, None)
+    # No events generated
+
+
+def _stage_agent_evaluation(orch) -> None:
+    """Run deterministic agents and collect their SurgicalEvent actions.
+    """
+    # Ensure the agent registry exists – orchestrator creates it in __init__
+    if not hasattr(orch, "agent_registry"):
+        from scrubin.agents.agent_registry import AgentRegistry
+        orch.agent_registry = AgentRegistry()
+    # Evaluate agents – pass world, physiology snapshot, and resource snapshot
+    physiology_snapshot = orch.world.physiology  # mutable snapshot for agents
+    events = orch.agent_registry.evaluate(orch.world, physiology_snapshot, orch.resource_snapshot)
+    # Add to per‑tick event list and queue
+    if events:
+        orch._last_events.extend(events)
+        for ev in events:
+            orch.sim_event_queue.add(ev)
+
+
+def _stage_agent_actions(orch) -> None:
+    """Placeholder for any additional agent‑generated actions.
+    Currently merged into ``_stage_agent_evaluation`` – no extra work.
+    """
+    pass
 
 
 def _stage_flush(orch) -> None:
@@ -117,9 +215,12 @@ def compile_execution_plan(orchestrator) -> ExecutionPlan:
         ExecutionStage(name="physiology", handler=_stage_physiology, order=1),
         ExecutionStage(name="disease", handler=_stage_disease, order=2),
         ExecutionStage(name="pkpd", handler=_stage_pkpd, order=3),
-        ExecutionStage(name="hidden", handler=_stage_hidden, order=4),
-        ExecutionStage(name="complication", handler=_stage_complication, order=5),
-        ExecutionStage(name="flush", handler=_stage_flush, order=6),
+        ExecutionStage(name="pkpd_v2", handler=_stage_pkpd_v2, order=4),
+        ExecutionStage(name="hemodynamics", handler=_stage_hemodynamics, order=5),
+        ExecutionStage(name="multi_disease", handler=_stage_multi_disease_interaction, order=6),
+        ExecutionStage(name="hidden", handler=_stage_hidden, order=7),
+        ExecutionStage(name="complication", handler=_stage_complication, order=8),
+        ExecutionStage(name="flush", handler=_stage_flush, order=9),
     ]
     # Deterministic ordering – sorted by ``order``.
     stages.sort(key=lambda s: s.order)

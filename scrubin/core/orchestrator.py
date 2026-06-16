@@ -1,5 +1,6 @@
 import uuid
 from scrubin.compiler.execution_compiler import compile_execution_plan
+from scrubin.compiler.mode_selector import ExecutionMode
 from typing import Any
 
 from scrubin.core.bus import EventBus
@@ -101,6 +102,19 @@ class Orchestrator:
         self.decision_executor = decision_executor
         self.patient_profile = patient_profile or STANDARD_PATIENT
         self.mode = mode
+        # Resolve to ExecutionMode enum (default to scientific)
+        if isinstance(self.mode, str):
+            mode_norm = self.mode.strip().lower()
+            if mode_norm in ("autonomous", "interactive", "scientific", "sci"):
+                self._exec_mode = ExecutionMode.SCIENTIFIC
+            elif mode_norm in ("benchmark", "bench"):
+                self._exec_mode = ExecutionMode.BENCHMARK
+            else:
+                raise ValueError(f"Invalid orchestrator mode: {self.mode!r}")
+        else:
+            self._exec_mode = self.mode  # already an ExecutionMode
+        # Compile deterministic execution plan (mode‑aware)
+        self._execution_plan = compile_execution_plan(self)
         self.authority = ActionAuthority(
             bus=self.bus,
             ledger=self.ledger,
@@ -347,18 +361,33 @@ class Orchestrator:
             for decision in self.executive_policy_store.decisions
         ]
         self.long_horizon_planner.generate_plan(self.tick_count, actions)
-        run_cognitive_pipeline(
-            self.world,
-            self.memory_store,
-            self.fact_store,
-            self.belief_store,
-            self.reflection_store,
-            self.graph_store,
-            self.counterfactual_store,
-            self.meta_store,
-            self.plan_store,
-            self.executive_store,
-        )
+        if self._exec_mode == ExecutionMode.SCIENTIFIC:
+            run_cognitive_pipeline(
+                self.world,
+                self.memory_store,
+                self.fact_store,
+                self.belief_store,
+                self.reflection_store,
+                self.graph_store,
+                self.counterfactual_store,
+                self.meta_store,
+                self.plan_store,
+                self.executive_store,
+            )
+        else:
+            from scrubin.cognition.cognition_fast import run_cognitive_pipeline_fast
+            run_cognitive_pipeline_fast(
+                self.world,
+                self.memory_store,
+                self.fact_store,
+                self.belief_store,
+                self.reflection_store,
+                self.graph_store,
+                self.counterfactual_store,
+                self.meta_store,
+                self.plan_store,
+                self.executive_store,
+            )
         
         profile = self.profiler.end_tick()
         self.perf_metrics.record_tick(TickMetrics(
@@ -381,72 +410,20 @@ class Orchestrator:
     def _evolve_world(self):
         prev_state = self.world.to_dict()
         prev_mortality = self.world.mortality_risk
+        # Initialise per‑tick event collection
+        self._last_events = []
 
-        # ---------- Deterministic physiology evolution ----------
-        # Build an immutable WorldState snapshot required by the physiology engine.
-        from scrubin.world.state import WorldState, PhysiologicalState, CardiovascularState, RespiratoryState, ComplicationWorldState
-        vitals = self.world.physiology.vitals
-        cardio = CardiovascularState(
-            map=vitals.get("map", 100.0),
-            heart_rate=vitals.get("heart_rate", 80.0),
-        )
-        resp = RespiratoryState(
-            spo2=vitals.get("spo2", 98.0),
-        )
-        phys_state = PhysiologicalState(vitals=vitals, cardiovascular=cardio, respiratory=resp)
-        immutable_world = WorldState(
-            tick=self.world.tick,
-            physiology=phys_state,
-            complications=ComplicationWorldState(),
-            hidden_effects=tuple(),
-        )
-# Generate all deterministic events for this tick and process them in a single pass
-# 1. Physiology events (including timeline)
-phy_events, phy_timeline = generate_physiology_events(immutable_world, SimulationRNG(self.seed))
-
-# 2. Disease progression events
-from scrubin.physiology.disease_progression import DiseaseProgressionEngine
-disease_engine = DiseaseProgressionEngine()
-disease_events = disease_engine.generate_events(self.world)
-
-# 3. Medication PK/PD events
-from scrubin.physiology.pkpd_engine import PKPDEngine
-pkpd_engine = PKPDEngine()
-pkpd_events = pkpd_engine.generate_events(self.world)
-
-# 4. Hidden‑state propagation events
-from scrubin.engine.hidden_state_propagation import apply_hidden_state_propagation
-hidden_events = apply_hidden_state_propagation(self.world)
-
-# 5. Complication generation events
-comp_events = generate_complication_events(self.world)
-
-# Consolidate events preserving the original order
-all_events = []
-all_events.extend(phy_events)
-all_events.extend(disease_events)
-all_events.extend(pkpd_events)
-all_events.extend(hidden_events)
-all_events.extend(comp_events)
-
-# Enqueue events
-for ev in all_events:
-    self.sim_event_queue.add(ev)
-
-# Process the accumulated events once
-from scrubin.events.event_processor import process_events
-self.world, self.sim_event_queue = process_events(self.world, self.sim_event_queue, authority=self.authority)
-
-# Apply any physiology timeline events after processing (they are not part of the event queue)
-        if phy_timeline:
-    self.world.append_timeline(phy_timeline)
+# ---------- Deterministic physiology evolution ----------
+        # Execute deterministic event generation and processing using the compiled execution plan.
+        for stage in self._execution_plan.stages:
+            stage.handler(self)
 
         # Recalculate derived clinical metrics (mortality, SOFA, NEWS2)
         _recalculate_derived_metrics(self.world)
 
         # ---------- Episodic Memory Encoding ----------
         # Combine deterministic events generated this tick
-        events_this_tick = all_events
+        events_this_tick = self._last_events
         episode = encode_events_to_episode(events_this_tick, self.world, self.tick_count)
         self.memory_store.add_episode(episode)
         # Update semantic facts from the new episode
@@ -462,36 +439,37 @@ self.world, self.sim_event_queue = process_events(self.world, self.sim_event_que
         for task in newly_completed:
             self.bus.publish("diagnostic_result", task.to_dict())
 
-        # ---------- Validation ----------
-        self.profiler.start_phase("validator")
-        self.invariant_validator.validate(self.world)
-        self.profiler.end_phase("validator")
+        if self._exec_mode == ExecutionMode.SCIENTIFIC:
+            # ---------- Validation ----------
+            self.profiler.start_phase("validator")
+            self.invariant_validator.validate(self.world)
+            self.profiler.end_phase("validator")
 
-        # ---------- Auditing ----------
-        self.profiler.start_phase("audit")
-        self.transition_auditor.record(
-            tick=self.tick_count,
-            source_event="world.evolve_deterministic",
-            affected_system="simulation_world",
-            before=prev_state,
-            after=self.world.to_dict(),
-        )
-        self.profiler.end_phase("audit")
+            # ---------- Auditing ----------
+            self.profiler.start_phase("audit")
+            self.transition_auditor.record(
+                tick=self.tick_count,
+                source_event="world.evolve_deterministic",
+                affected_system="simulation_world",
+                before=prev_state,
+                after=self.world.to_dict(),
+            )
+            self.profiler.end_phase("audit")
 
-        self.profiler.start_phase("hash")
-        from scrubin.replay.hash import world_hash
-        tick_hash = world_hash(self.world)
-        self.ledger.log(
-            "world_hash_generated",
-            {"tick": self.tick_count, "hash": tick_hash},
-            tick=self.tick_count,
-        )
-        self.profiler.end_phase("hash")
+            self.profiler.start_phase("hash")
+            from scrubin.replay.hash import world_hash
+            tick_hash = world_hash(self.world)
+            self.ledger.log(
+                "world_hash_generated",
+                {"tick": self.tick_count, "hash": tick_hash},
+                tick=self.tick_count,
+            )
+            self.profiler.end_phase("hash")
 
-        if self.snapshot_engine.should_snapshot(self.tick_count):
-            self.profiler.start_phase("snapshot")
-            self.snapshot_engine.capture(self.world, self.tick_count)
-            self.profiler.end_phase("snapshot")
+            if self.snapshot_engine.should_snapshot(self.tick_count):
+                self.profiler.start_phase("snapshot")
+                self.snapshot_engine.capture(self.world, self.tick_count)
+                self.profiler.end_phase("snapshot")
 
         for organ_name, organ in [("cardiovascular", self.world.organ_state.cardiovascular),
                                   ("respiratory", self.world.organ_state.respiratory),

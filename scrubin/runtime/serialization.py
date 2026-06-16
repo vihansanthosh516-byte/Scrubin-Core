@@ -53,9 +53,19 @@ def serialize_world(world: WorldState) -> Dict[str, Any]:
     """Serialize ``WorldState`` to a JSON‑compatible ``dict``.
 
     The result can be safely passed to ``json.dumps`` or stored in a database.
-    ``asdict`` already yields a deep mapping of standard Python types.
+    ``asdict`` yields a deep mapping of standard Python types, but we strip
+    ``deterministic_id`` fields (which are ``init=False``) to ensure the data can
+    be reconstructed without invoking the field constructor.
     """
-    return asdict(world)
+    def _strip_det_id(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {k: _strip_det_id(v) for k, v in value.items() if k != "deterministic_id"}
+        if isinstance(value, list):
+            return [_strip_det_id(v) for v in value]
+        return value
+
+    raw = asdict(world)
+    return _strip_det_id(raw)
 
 
 def deserialize_world(data: Dict[str, Any]) -> WorldState:

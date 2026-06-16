@@ -29,7 +29,13 @@ def _convert_to_serializable(obj: Any) -> Any:
     if isinstance(obj, tuple):
         return [_convert_to_serializable(item) for item in obj]
     if hasattr(obj, "__dataclass_fields__"):
-        return {k: _convert_to_serializable(v) for k, v in asdict(obj).items()}
+        # Serialize only fields that are part of the init signature (init=True).
+        field_dict = {}
+        for f_name, f_def in obj.__dataclass_fields__.items():
+            if f_def.init:
+                value = getattr(obj, f_name)
+                field_dict[f_name] = _convert_to_serializable(value)
+        return field_dict
     if isinstance(obj, list):
         return [_convert_to_serializable(item) for item in obj]
     if isinstance(obj, dict):
