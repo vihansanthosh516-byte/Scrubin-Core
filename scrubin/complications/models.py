@@ -1,69 +1,137 @@
-'''Immutable complication model for deterministic simulation.
-
-All fields are frozen dataclasses; any change must be performed via
-``dataclasses.replace`` which returns a new instance. The model contains a
-``deterministic_id`` that is a SHA‑256 hash of the immutable fields; this is
-used by the replay‑hash system to guarantee that two identical complication
-states produce identical hashes.
-'''
+"""Data models for the complications core.
++
++All models are frozen dataclasses to guarantee immutability.  ``replace`` from
++``dataclasses`` is used for updates, ensuring no deep‑copy or mutable state is
++introduced.  Deterministic ordering and hashing are provided via tuple‑based
++fields.
++"""
 
 from __future__ import annotations
 
-import hashlib
-from dataclasses import dataclass, field
-from typing import Tuple, Any
+from dataclasses import dataclass, replace
+from typing import Any, Tuple
 
 
 @dataclass(frozen=True, slots=True)
 class Complication:
-    """Deterministic complication definition.
+    """Immutable representation of a single complication.
++
++    Fields are deliberately simple and hashable.  ``physiology_delta`` and
++    ``anatomy_delta`` are opaque payloads supplied by the caller – they must be
++    hashable for deterministic hashing.
++    """
 
-    * ``id`` – unique identifier for the complication.
-    * ``type`` – high‑level category (e.g., "arterial_bleeding").
-    * ``trigger`` – step ID that activates the complication.
-    * ``resolution`` – step ID that resolves the complication.
-    * ``severity`` – numeric severity score (0.0 … 1.0).
-    * ``affected_regions`` – identifiers of anatomy regions impacted.
-    * ``physiology_effects`` – tuple of (key, delta) pairs applied to physiology.
-    * ``anatomy_effects`` – tuple of (key, delta) pairs applied to anatomy.
-    * ``team_requirements`` – additional team resources needed.
-    * ``progression_rate`` – severity increase per tick while active.
-    * ``recovery_rate`` – severity decrease per successful intervention.
-    * ``active`` – whether the complication is currently active.
-    * ``resolved`` – whether it has been resolved.
-    """
+    deterministic_id: int
+    complication_type: str
+    affected_structure: str
+    severity: int
+    progression_stage: str
+    activation_tick: int
+    last_update_tick: int
+    active: bool
+    resolved: bool
+    physiology_delta: Any
+    anatomy_delta: Any
+    metadata: Any
 
-    id: str
-    type: str
-    trigger: str
-    resolution: str
-    severity: float = 0.0
-    affected_regions: Tuple[str, ...] = field(default_factory=tuple)
-    physiology_effects: Tuple[Tuple[str, float], ...] = field(default_factory=tuple)
-    anatomy_effects: Tuple[Tuple[str, Any], ...] = field(default_factory=tuple)
-    team_requirements: Tuple[str, ...] = field(default_factory=tuple)
-    progression_rate: float = 0.0
-    recovery_rate: float = 0.0
-    active: bool = False
-    resolved: bool = False
-    deterministic_id: str = field(init=False)
+    def advance_stage(self, new_stage: str, tick: int, severity: int | None = None) -> "Complication":
+        """Return a new instance with an updated progression stage.
++
++        ``severity`` may be adjusted; if omitted the existing value is kept.
++        """
 
-    def __post_init__(self) -> None:
-        # Compute deterministic identifier based on immutable content.
-        parts = [
-            self.id,
-            self.type,
-            self.trigger,
-            self.resolution,
-            f"{self.severity:.6f}",
-            ",".join(self.affected_regions),
-            ",".join(f"{k}:{v}" for k, v in self.physiology_effects),
-            ",".join(f"{k}:{v}" for k, v in self.anatomy_effects),
-            ",".join(self.team_requirements),
-            f"{self.progression_rate:.6f}",
-            f"{self.recovery_rate:.6f}",
-            str(self.active),
-            str(self.resolved),
-        ]
-        digest = hashlib.sha256("|".join(parts).encode()).hexdigest()
-        object.__setattr__(self, "deterministic_id", digest)
+        return replace(
+            self,
+            progression_stage=new_stage,
+            last_update_tick=tick,
+            severity=severity if severity is not None else self.severity,
+        )
+
+    def resolve(self, tick: int) -> "Complication":
+        """Mark the complication as resolved at ``tick``.
++        """
+
+        return replace(
+            self,
+            resolved=True,
+            active=False,
+            last_update_tick=tick,
+        )
+
+    def deactivate(self, tick: int) -> "Complication":
+        """Deactivate without resolving (e.g., temporary pause)."""
+
+        return replace(self, active=False, last_update_tick=tick)
+
+
+@dataclass(frozen=True, slots=True)
+class ComplicationEvent:
+    """Immutable event emitted by the manager.
++
++    ``event_type`` is a short string such as ``"activated"`` or ``"resolved"``.
++    ``complication_id`` references the associated complication.
++    """
+
+    tick: int
+    event_type: str
+    complication_id: int
+    details: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class ComplicationState:
+    """Container tracking the deterministic state of all complications.
++
++    ``active_complications`` and ``resolved_complications`` are stored as
++    *sorted* tuples to guarantee deterministic ordering regardless of insertion
++    order.  The ``deterministic_hash`` is a simple hash over the tuple of ids –
++    this remains stable across runs because all constituent objects are frozen
++    and hash‑stable.
++    """
+
+    active_complications: Tuple[Complication, ...] = ()
+    resolved_complications: Tuple[Complication, ...] = ()
+    deterministic_hash: int = 0
+
+    def _recalc_hash(self) -> int:
+        # Deterministic hash based on deterministic_id ordering
+        active_ids = tuple(c.deterministic_id for c in self.active_complications)
+        resolved_ids = tuple(c.deterministic_id for c in self.resolved_complications)
+        return hash((active_ids, resolved_ids))
+
+    def with_updates(
+        self,
+        *,
+        add_active: Tuple[Complication, ...] | None = None,
+        remove_active_ids: Tuple[int, ...] | None = None,
+        add_resolved: Tuple[Complication, ...] | None = None,
+    ) -> "ComplicationState":
+        """Return a new state with the supplied modifications applied.
++
++        All collections are kept sorted by ``deterministic_id``.
++        """
+
+        active = list(self.active_complications)
+        resolved = list(self.resolved_complications)
+
+        if add_active:
+            active.extend(add_active)
+        if remove_active_ids:
+            active = [c for c in active if c.deterministic_id not in set(remove_active_ids)]
+        if add_resolved:
+            resolved.extend(add_resolved)
+
+        # Sort for deterministic ordering
+        active.sort(key=lambda c: c.deterministic_id)
+        resolved.sort(key=lambda c: c.deterministic_id)
+
+        new_state = replace(
+            self,
+            active_complications=tuple(active),
+            resolved_complications=tuple(resolved),
+        )
+        # Recalculate hash
+        return replace(new_state, deterministic_hash=new_state._recalc_hash())
+
+*** End Patch
+PATCH
