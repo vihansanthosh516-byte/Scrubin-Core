@@ -1,97 +1,82 @@
-"""Deterministic organ interaction engine.
-+
-+The engine receives a tuple of system instances and returns a new tuple with
-+deterministically propagated effects.  The logic is intentionally simple but
-+covers the cascades described in the specification.
-+"""
+"""Deterministic inter‑system interaction engine.
+
+The engine takes a ``SystemsState`` snapshot and propagates the effect of one
+system onto another using purely deterministic arithmetic.  No randomness,
+no external services – just functional updates via ``replace``.
+"""
 
 from __future__ import annotations
 
-from typing import Tuple, List
+from dataclasses import replace
 
-from .models import (
-    CardiovascularSystem,
-    RespiratorySystem,
-    RenalSystem,
-    HepaticSystem,
-    NeurologicSystem,
-    ImmuneSystem,
-    EndocrineSystem,
-    MetabolicSystem,
-)
+from .models import SystemsState, CardiovascularSystem
 
 
-class OrganInteractionEngine:
-    """Stateless deterministic propagation of organ‑system effects.
-+
-+    The implementation follows a fixed rule order that mimics the cascade:
-+    1. Cardiovascular stress reduces renal perfusion.
-+    2. Reduced renal perfusion lowers urine output → acidosis ↑ → cardiac
-+       stress ↑.
-+    3. Hepatic dysfunction raises coagulopathy → bleeding risk ↑.
-+    4. Immune activation raises metabolic demand.
-+    5. Respiratory failure raises hypoxia → neurologic stress.
-+
-+    Each step uses immutable ``replace`` updates and deterministic arithmetic.
-+    The method returns a new tuple of updated system objects preserving the
-+    original ordering.
-+    """
+class InteractionEngine:
+    """Pure deterministic interaction logic between organ systems.
+
+    The implementation is intentionally simple – it captures the canonical chain
+    described in the specification (cardiovascular → renal → metabolic → …) but
+    remains fully deterministic and side‑effect free.
+    """
 
     @staticmethod
-    def propagate(
-        cardio: CardiovascularSystem,
-        resp: RespiratorySystem,
-        renal: RenalSystem,
-        hep: HepaticSystem,
-        neuro: NeurologicSystem,
-        endocrine: EndocrineSystem,
-        immune: ImmuneSystem,
-        metabolic: MetabolicSystem,
-    ) -> Tuple[
-        CardiovascularSystem,
-        RespiratorySystem,
-        RenalSystem,
-        HepaticSystem,
-        NeurologicSystem,
-        EndocrineSystem,
-        ImmuneSystem,
-        MetabolicSystem,
-    ]:
-        # 1. Cardiovascular stress influences renal perfusion
-        renal_perf = max(0.0, renal.perfusion - cardio.stress_level * 0.1)
-        renal2 = renal.update(perfusion=renal_perf, stress_level=renal.stress_level + cardio.stress_level * 0.05)
+    def evaluate(state: SystemsState) -> SystemsState:
+        """Return a new ``SystemsState`` after applying deterministic interactions.
 
-        # 2. Renal perfusion impacts acidosis and cardiac stress
-        acidosis = max(0.0, (1.0 - renal2.perfusion) * 2.0)
-        cardio2 = cardio.update(
-            stress_level=cardio.stress_level + acidosis * 0.2,
-            oxygen_delivery=cardio.oxygen_delivery - acidosis * 0.5,
+        The rules are illustrative yet deterministic:
+
+        * Cardiovascular perfusion scales renal perfusion.
+        * Reduced renal perfusion raises metabolic stress (simulating acidosis).
+        * Metabolic stress feeds back into cardiovascular stress.
+        * Cardiovascular oxygen delivery influences respiratory oxygen delivery.
+        * Hepatic perfusion follows cardiovascular perfusion.
+        * Immune stress rises with metabolic stress.
+        * Neurologic stress rises with cardiovascular stress.
+        * Endocrine compensation rises with cardiovascular stress.
+        """
+        cv: CardiovascularSystem = state.cardiovascular
+
+        # ---- Cardiovascular → Renal ------------------------------------------------
+        new_renal_perf = state.renal.perfusion * cv.perfusion
+        renal = replace(state.renal, perfusion=new_renal_perf)
+
+        # ---- Renal → Metabolic (stress increase) ----------------------------------
+        # Simple deterministic mapping: if renal perfusion below 0.5, raise stress.
+        renal_deficit = max(0.0, 0.5 - new_renal_perf)
+        stress_inc = renal_deficit * 2.0  # proportional increase
+        metabolic = replace(state.metabolic, stress_level=state.metabolic.stress_level + stress_inc)
+
+        # ---- Metabolic → Cardiovascular stress ------------------------------------
+        cv = replace(cv, stress_level=cv.stress_level + stress_inc)
+
+        # ---- Cardiovascular → Respiratory oxygen delivery ---------------------------
+        resp = replace(
+            state.respiratory,
+            oxygen_delivery=state.respiratory.oxygen_delivery * cv.oxygen_delivery,
         )
 
-        # 3. Hepatic dysfunction raises bleeding risk (reflected by stress)
-        hep2 = hep.update(stress_level=hep.stress_level + cardio2.stress_level * 0.1)
+        # ---- Cardiovascular → Hepatic perfusion ------------------------------------
+        hepatic = replace(state.hepatic, perfusion=state.hepatic.perfusion * cv.perfusion)
 
-        # 4. Immune activation raises metabolic demand
-        metabolic2 = metabolic.update(
-            oxygen_consumption=metabolic.oxygen_consumption + immune.stress_level * 0.3,
-            stress_level=metabolic.stress_level + immune.stress_level * 0.2,
-        )
+        # ---- Metabolic → Immune stress --------------------------------------------
+        immune = replace(state.immune, stress_level=state.immune.stress_level + stress_inc)
 
-        # 5. Respiratory failure (low perfusion) raises neurologic stress
-        neuro2 = neuro.update(stress_level=neuro.stress_level + resp.stress_level * 0.15)
+        # ---- Cardiovascular → Neurologic stress -----------------------------------
+        neuro = replace(state.neurologic, stress_level=state.neurologic.stress_level + cv.stress_level * 0.5)
 
-        # Endocrine and other systems remain unchanged for now
-        endocrine2 = endocrine
-        immune2 = immune
-        resp2 = resp
+        # ---- Cardiovascular → Endocrine compensation ------------------------------
+        endocrine = replace(state.endocrine, compensation_level=state.endocrine.compensation_level + cv.stress_level * 0.2)
 
-        return (
-            cardio2,
-            resp2,
-            renal2,
-            hep2,
-            neuro2,
-            endocrine2,
-            immune2,
-            metabolic2,
+        # Return a brand‑new immutable snapshot.
+        return replace(
+            state,
+            cardiovascular=cv,
+            respiratory=resp,
+            renal=renal,
+            hepatic=hepatic,
+            neurologic=neuro,
+            endocrine=endocrine,
+            immune=immune,
+            metabolic=metabolic,
         )

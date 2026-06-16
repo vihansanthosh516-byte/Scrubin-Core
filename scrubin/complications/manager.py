@@ -31,6 +31,11 @@ class ComplicationManager:
 +        ``"activated"`` event.  ``comp`` is expected to have ``active=False``.
 +        """
 
+        # If already active, return existing state unchanged (hash remains stable)
+        already_active = any(c.deterministic_id == comp.deterministic_id for c in state.active_complications)
+        if already_active:
+            event = ComplicationEvent(tick=tick, event_type="activated", complication_id=comp.deterministic_id)
+            return state, event
         new_comp = replace(comp, active=True, activation_tick=tick, last_update_tick=tick, progression_stage="Active")
         new_state = state.with_updates(add_active=(new_comp,))
         event = ComplicationEvent(tick=tick, event_type="activated", complication_id=new_comp.deterministic_id)

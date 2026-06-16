@@ -1,48 +1,43 @@
-"""Deterministic perfusion calculations for organ systems.
-+
-+Given global hemodynamic inputs the engine returns perfusion values for key
-+organs.  The formulas are simple deterministic linear relationships.
-+"""
+"""Deterministic perfusion engine.
+
+Computes organ‑specific perfusion values from the cardiovascular haemodynamic
+parameters.  All calculations are pure arithmetic; the result is a new
+immutable ``SystemsState`` via ``replace``.
+"""
 
 from __future__ import annotations
 
-from typing import Mapping, Tuple
+from dataclasses import replace
+
+from .models import SystemsState, CardiovascularSystem
 
 
 class PerfusionEngine:
-    """Stateless deterministic perfusion calculator.
-+
-+    Inputs:
-+        * map_: mean arterial pressure (mmHg)
-+        * cardiac_output: L/min
-+        * vascular_resistance: arbitrary units
-+        * blood_loss: ml (reduces effective MAP)
-+        * vasopressor: boolean flag (adds fixed MAP boost)
-+
-+    Returns a mapping of organ → perfusion (ml/min) values.
-+    """
+    """Calculate deterministic organ perfusion based on cardiovascular parameters.
+
+    The formulas are linear and deterministic – they do not involve any random
+    component or external lookup.  The same input snapshot always yields the
+    same output snapshot.
+    """
 
     @staticmethod
-    def compute(
-        map_: float,
-        cardiac_output: float,
-        vascular_resistance: float,
-        blood_loss: float,
-        vasopressor: bool = False,
-    ) -> Mapping[str, float]:
-        # Adjust MAP for blood loss deterministically
-        adjusted_map = map_ - blood_loss * 0.05
-        if vasopressor:
-            adjusted_map += 10.0
+    def evaluate(state: SystemsState) -> SystemsState:
+        cv: CardiovascularSystem = state.cardiovascular
+        # Deterministic scaling factor derived from MAP, blood loss and vasopressor.
+        factor = (cv.map / 100.0) * (1.0 - cv.blood_loss * 0.001) * (1.0 + cv.vasopressor_support * 0.1)
+        # Ensure factor stays within a reasonable deterministic range.
+        factor = max(0.0, min(2.0, factor))
 
-        # Base organ share fractions (deterministic)
-        shares = {
-            "brain": 0.15,
-            "liver": 0.25,
-            "kidney": 0.20,
-            "bowel": 0.10,
-            "lung": 0.30,
-        }
-        # Perfusion ~ MAP * CO / (VR) * share
-        base = adjusted_map * cardiac_output / (vascular_resistance + 1e-3)
-        return {organ: base * frac for organ, frac in shares.items()}
+        # Apply factor to each organ's perfusion (excluding the heart itself which
+        # already tracks its own perfusion).
+        renal = replace(state.renal, perfusion=state.renal.perfusion * factor)
+        hepatic = replace(state.hepatic, perfusion=state.hepatic.perfusion * factor)
+        neuro = replace(state.neurologic, perfusion=state.neurologic.perfusion * factor)
+        # Respiratory perfusion is not modelled separately here; we leave it unchanged.
+
+        return replace(
+            state,
+            renal=renal,
+            hepatic=hepatic,
+            neurologic=neuro,
+        )

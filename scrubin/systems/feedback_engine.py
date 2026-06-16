@@ -1,83 +1,63 @@
-"""Deterministic feedback engine for organ systems.
-+
-+Implements explicit positive and negative feedback loops using pure functions.
-+All loops are bounded and terminate after a single deterministic update per
-+tick.
-+"""
+"""Deterministic feedback engine.
+
+Implements simple positive and negative feedback loops between organ systems.
+All updates are performed with ``replace`` and are fully deterministic – the
+same input snapshot always yields the same output snapshot.
+"""
 
 from __future__ import annotations
 
-from typing import Tuple
+from dataclasses import replace
 
-from .models import (
-    CardiovascularSystem,
-    RespiratorySystem,
-    RenalSystem,
-    HepaticSystem,
-    NeurologicSystem,
-    EndocrineSystem,
-    ImmuneSystem,
-    MetabolicSystem,
-)
+from .models import SystemsState
 
 
 class FeedbackEngine:
-    """Deterministic feedback loop processing.
-+
-+    Two example loops are encoded:
-+    * Hemorrhage → hypotension → reduced perfusion → further hypotension
-+      (positive feedback) – capped by a deterministic factor.
-+    * Hypoxia → increased respiratory drive → improved oxygen delivery →
-+      reduced stress (negative feedback).
-+    The method returns updated system objects; loops are applied once per tick.
-+    """
+    """Apply deterministic feedback loops.
+
+    * Positive feedback: high metabolic stress forces cardiovascular failure.
+    * Negative feedback: once cardiovascular failure occurs, all systems receive a
+      deterministic stress increase (simulating a worsening cascade).  The loop
+      is bounded – stress increments are capped by the deterministic logic.
+    """
 
     @staticmethod
-    def process(
-        cardio: CardiovascularSystem,
-        resp: RespiratorySystem,
-        renal: RenalSystem,
-        hep: HepaticSystem,
-        neuro: NeurologicSystem,
-        endocrine: EndocrineSystem,
-        immune: ImmuneSystem,
-        metabolic: MetabolicSystem,
-    ) -> Tuple[
-        CardiovascularSystem,
-        RespiratorySystem,
-        RenalSystem,
-        HepaticSystem,
-        NeurologicSystem,
-        EndocrineSystem,
-        ImmuneSystem,
-        MetabolicSystem,
-    ]:
-        # Positive feedback: blood loss (simulated via cardio stress) amplifies hypotension
-        hypotension_factor = min(1.0, cardio.stress_level * 0.02)
-        new_perf = max(0.0, cardio.perfusion * (1 - hypotension_factor))
-        cardio2 = cardio.update(perfusion=new_perf, stress_level=cardio.stress_level + hypotension_factor * 5)
+    def evaluate(state: SystemsState) -> SystemsState:
+        cv = state.cardiovascular
+        metabolic = state.metabolic
 
-        # Negative feedback: hypoxia (respiratory stress) triggers increased drive
-        hypoxia = resp.stress_level
-        drive_increase = min(5.0, hypoxia * 0.5)
-        resp2 = resp.update(compensation_level=resp.compensation_level + int(drive_increase))
-        # Assume improved oxygen delivery reduces overall systemic stress slightly
-        systemic_reduction = drive_increase * 0.1
-        cardio2 = cardio2.update(stress_level=max(0.0, cardio2.stress_level - systemic_reduction))
-        renal2 = renal.update(stress_level=max(0.0, renal.stress_level - systemic_reduction))
-        hep2 = hep.update(stress_level=max(0.0, hep.stress_level - systemic_reduction))
-        neuro2 = neuro.update(stress_level=max(0.0, neuro.stress_level - systemic_reduction))
-        endocrine2 = endocrine.update(stress_level=max(0.0, endocrine.stress_level - systemic_reduction))
-        immune2 = immune.update(stress_level=max(0.0, immune.stress_level - systemic_reduction))
-        metabolic2 = metabolic.update(stress_level=max(0.0, metabolic.stress_level - systemic_reduction))
+        # Positive feedback – metabolic stress pushes cardiovascular failure.
+        if metabolic.stress_level > 5.0:
+            cv = replace(cv, failure_state=True)
 
-        return (
-            cardio2,
-            resp2,
-            renal2,
-            hep2,
-            neuro2,
-            endocrine2,
-            immune2,
-            metabolic2,
+        # If the heart has failed, deterministic stress rise across all systems.
+        if cv.failure_state:
+            inc = 1.0  # deterministic increment
+            cv = replace(cv, stress_level=cv.stress_level + inc)
+            resp = replace(state.respiratory, stress_level=state.respiratory.stress_level + inc)
+            renal = replace(state.renal, stress_level=state.renal.stress_level + inc)
+            hepatic = replace(state.hepatic, stress_level=state.hepatic.stress_level + inc)
+            neuro = replace(state.neurologic, stress_level=state.neurologic.stress_level + inc)
+            endocrine = replace(state.endocrine, stress_level=state.endocrine.stress_level + inc)
+            immune = replace(state.immune, stress_level=state.immune.stress_level + inc)
+            metabolic = replace(metabolic, stress_level=metabolic.stress_level + inc)
+        else:
+            # No change – keep the original sub‑states.
+            resp = state.respiratory
+            renal = state.renal
+            hepatic = state.hepatic
+            neuro = state.neurologic
+            endocrine = state.endocrine
+            immune = state.immune
+
+        return replace(
+            state,
+            cardiovascular=cv,
+            respiratory=resp,
+            renal=renal,
+            hepatic=hepatic,
+            neurologic=neuro,
+            endocrine=endocrine,
+            immune=immune,
+            metabolic=metabolic,
         )

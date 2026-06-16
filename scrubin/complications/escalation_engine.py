@@ -69,5 +69,8 @@ class EscalationEngine:
 
         # Preserve deterministic ordering by sorting after updates
         new_active.sort(key=lambda c: c.deterministic_id)
+        # If no changes occurred (no events and new_active equals original), return original state.
+        if not events and tuple(new_active) == state.active_complications:
+            return state, tuple()
         new_state = state.with_updates(remove_active_ids=tuple(c.deterministic_id for c in state.active_complications), add_active=tuple(new_active))
         return new_state, tuple(events)

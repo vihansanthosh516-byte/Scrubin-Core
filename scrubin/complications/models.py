@@ -114,10 +114,11 @@ class ComplicationState:
         active = list(self.active_complications)
         resolved = list(self.resolved_complications)
 
-        if add_active:
-            active.extend(add_active)
+        # Apply removals first to avoid removing newly added items with the same ID.
         if remove_active_ids:
             active = [c for c in active if c.deterministic_id not in set(remove_active_ids)]
+        if add_active:
+            active.extend(add_active)
         if add_resolved:
             resolved.extend(add_resolved)
 
@@ -133,5 +134,4 @@ class ComplicationState:
         # Recalculate hash
         return replace(new_state, deterministic_hash=new_state._recalc_hash())
 
-*** End Patch
-PATCH
+
