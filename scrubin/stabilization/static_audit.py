@@ -27,7 +27,7 @@ PROHIBITED_PATTERNS = {
     "hash\([^)]*\)": "error",
 }
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class AuditViolation:
     file_path: str
     line_number: int
@@ -35,7 +35,7 @@ class AuditViolation:
     line_content: str
     severity: str  # "error" or "warning"
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StaticAuditReport:
     passed: bool
     violations: Tuple[AuditViolation, ...]

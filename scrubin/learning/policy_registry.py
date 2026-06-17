@@ -19,7 +19,8 @@ class PolicyMetadata:
 
     def __post_init__(self):
         if not self.created_at:
-            self.created_at = datetime.now(timezone.utc).isoformat()
+            # Deterministic placeholder – fixed epoch timestamp.
+            self.created_at = "1970-01-01T00:00:00Z"
 
     def to_dict(self) -> dict:
         return {

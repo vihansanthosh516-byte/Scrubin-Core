@@ -8,6 +8,7 @@ deterministically where needed.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from scrubin.learning.models import _det_hash
 from typing import Tuple, Any
 
 
@@ -22,7 +23,7 @@ class SystemConsistencyReport:
 
     @property
     def deterministic_hash(self) -> int:
-        return hash(self.violations)
+        return _det_hash(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +34,7 @@ class CrossLayerValidation:
 
     @property
     def deterministic_hash(self) -> int:
-        return hash(self.details)
+        return _det_hash(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +48,7 @@ class DeterministicInvariantCheck:
 
     @property
     def deterministic_hash(self) -> int:
-        return hash(self.issues)
+        return _det_hash(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,7 +67,7 @@ class OrchestrationPlan:
 
     @property
     def deterministic_hash(self) -> int:
-        return hash(self.steps)
+        return _det_hash(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +86,7 @@ class ExecutionTrace:
 
     @property
     def deterministic_hash(self) -> int:
-        return hash(self.executed_steps)
+        return _det_hash(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,12 +101,10 @@ class MetaSnapshot:
 
     @property
     def deterministic_hash(self) -> int:
-        return hash(
-            (
-                self.state.deterministic_hash if hasattr(self.state, "deterministic_hash") else hash(self.state),
-                self.consistency_report.deterministic_hash,
-                self.invariant_check.deterministic_hash,
-                self.orchestration_plan.deterministic_hash,
-                self.execution_trace.deterministic_hash,
-            )
-        )
+        # Deterministic hash based on all components, including the underlying state.
+        state_hash = self.state.deterministic_hash if hasattr(self.state, "deterministic_hash") else hash(self.state)
+        return _det_hash((state_hash,
+                           self.consistency_report.deterministic_hash,
+                           self.invariant_check.deterministic_hash,
+                           self.orchestration_plan.deterministic_hash,
+                           self.execution_trace.deterministic_hash))

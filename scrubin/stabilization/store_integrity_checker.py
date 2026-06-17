@@ -29,13 +29,13 @@ REGISTERED_STORES = [
     "CascadeEventStore",
 ]
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StoreViolation:
     store_name: str
     violation_type: str  # "delete_method" | "mutable_object" | "in_place_mutation"
     detail: str
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StoreIntegrityReport:
     passed: bool
     violations: Tuple[StoreViolation, ...]

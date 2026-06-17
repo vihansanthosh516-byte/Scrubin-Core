@@ -7,13 +7,13 @@ import hashlib
 from dataclasses import dataclass
 from typing import Tuple, List, Any
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CanonicalViolation:
     location: str  # e.g., "world.vitals[\"temp\"]"
     violation_type: str  # "nan" | "inf"
     detail: str
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CrossPlatformReport:
     passed: bool
     canonical_violations: Tuple[CanonicalViolation, ...]

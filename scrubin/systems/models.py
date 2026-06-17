@@ -166,16 +166,14 @@ class SystemsState:
 
     @property
     def deterministic_hash(self) -> int:
-        # Combine the individual system hashes in the defined order.
-        return hash(
-            (
-                self.cardiovascular.deterministic_hash,
-                self.respiratory.deterministic_hash,
-                self.renal.deterministic_hash,
-                self.hepatic.deterministic_hash,
-                self.neurologic.deterministic_hash,
-                self.endocrine.deterministic_hash,
-                self.immune.deterministic_hash,
-                self.metabolic.deterministic_hash,
-            )
-        )
+        # Hash of the subsystem objects (or placeholders) in deterministic order.
+        return hash((
+            self.cardiovascular,
+            self.respiratory,
+            self.renal,
+            self.hepatic,
+            self.neurologic,
+            self.endocrine,
+            self.immune,
+            self.metabolic,
+        ))

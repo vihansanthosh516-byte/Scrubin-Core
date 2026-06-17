@@ -8,7 +8,7 @@ from typing import Tuple, List
 
 from scrubin.stabilization.hash_chain_validator import HashChainEntry
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class DivergenceReport:
     diverged: bool
     first_divergence_tick: int | None

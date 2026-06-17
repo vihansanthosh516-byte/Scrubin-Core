@@ -28,7 +28,7 @@ from scrubin.stabilization.mode_parity_verifier import verify_mode_parity, Parit
 from scrubin.core.orchestrator import Orchestrator
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StabilizationReport:
     passed: bool
     static_audit: StaticAuditReport

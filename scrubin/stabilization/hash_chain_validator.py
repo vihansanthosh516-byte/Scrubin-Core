@@ -16,7 +16,7 @@ from scrubin.replay.hash import world_hash
 # ---------------------------------------------------------------------------
 # Frozen dataclass for a single tick entry
 # ---------------------------------------------------------------------------
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HashChainEntry:
     tick: int
     world_state_hash: str

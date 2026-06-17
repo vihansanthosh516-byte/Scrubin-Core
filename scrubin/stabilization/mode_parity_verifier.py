@@ -8,7 +8,7 @@ from typing import Tuple
 
 from scrubin.stabilization.hash_chain_validator import HashChainEntry, build_hash_chain
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ParityReport:
     passed: bool
     total_ticks: int

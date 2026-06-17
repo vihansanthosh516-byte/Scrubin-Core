@@ -8,7 +8,7 @@ from typing import Tuple, List
 
 from scrubin.stabilization.hash_chain_validator import build_hash_chain, HashChainEntry
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ReplayVerificationResult:
     passed: bool
     total_ticks: int
