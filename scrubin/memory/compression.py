@@ -1,6 +1,5 @@
 import zlib
 import json
-import pickle
 from typing import List, Any, Dict
 
 
@@ -47,19 +46,44 @@ class LatentSummarizer:
         return summary
 
 
+def _episode_to_jsonable(trajectory: List[dict]) -> Any:
+    """Coerce an episode trajectory into a JSON-serialisable structure.
+
+    Individual episode records are expected to be plain dicts; any nested
+    objects exposing ``to_dict`` are converted automatically, and anything
+    else is stringified to keep the payload JSON-safe (and un-pickleable).
+    """
+    def _coerce(value: Any) -> Any:
+        if value is None or isinstance(value, (str, int, float, bool)):
+            return value
+        if isinstance(value, dict):
+            return {str(k): _coerce(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [_coerce(v) for v in value]
+        if hasattr(value, "to_dict"):
+            return _coerce(value.to_dict())
+        return str(value)
+
+    return [_coerce(item) for item in trajectory]
+
+
 class EpisodicMemory:
     """
     Deduplicates and stores important clinical episodes.
+
+    Episodes are serialised as JSON (via :meth:`json.dumps`) rather than pickle,
+    so stored blobs cannot trigger arbitrary code execution on retrieval.
     """
     def __init__(self):
         self.episodes: Dict[str, bytes] = {}
 
     def store(self, episode_id: str, trajectory: List[dict]):
-        data = pickle.dumps(trajectory)
+        payload = _episode_to_jsonable(trajectory)
+        data = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         self.episodes[episode_id] = zlib.compress(data)
 
     def retrieve(self, episode_id: str) -> List[dict]:
         if episode_id not in self.episodes:
             return []
         data = zlib.decompress(self.episodes[episode_id])
-        return pickle.loads(data)
+        return json.loads(data.decode("utf-8"))

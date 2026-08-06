@@ -31,12 +31,23 @@ class _ProfiledVitalsAgent(VitalsAgent):
         self._ranges = ranges
         self._drift = self._profile.vitals_drift
         self._pending_effects: list[dict] = []
+        self._active_trajectories: list = []
         orchestrator.register_agent("system.boot", self._on_boot)
         orchestrator.register_agent("tick", self._on_tick)
         orchestrator.register_agent("procedure", self._on_procedure)
 
     def _on_boot(self, event) -> None:
         print(f"[VitalsAgent] boot vitals={self._state}")
+
+    def _apply_pending(self, tick, vitals):
+        """Apply any activated vital trajectories, then return vitals.
+
+        Reuses the base ``_apply_trajectories`` helper so that queued procedure
+        effects (registered via the inherited ``_on_procedure`` handler) are
+        honored deterministically. Mirrors the production VitalsAgent behaviour.
+        """
+        vitals = self._apply_trajectories(tick, vitals)
+        return vitals
 
     def _on_tick(self, event) -> None:
         tick = event.payload.get("tick", 0)

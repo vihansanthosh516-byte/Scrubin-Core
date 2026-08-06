@@ -104,7 +104,7 @@ class PatchExecutor:
                 findings += PhysiologyCheck().run(ledger)
                 findings += CausalityCheck().run(ledger)
                 findings += RecoveryCheck().run(ledger)
-                score = ScoreEngine().compute(findings)
+                score = ScoreEngine().compute(ledger, findings)
 
                 return TestRun(
                     seed=self.seed,

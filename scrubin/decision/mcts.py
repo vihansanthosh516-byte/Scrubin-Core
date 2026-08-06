@@ -59,17 +59,18 @@ class MonteCarloTreeSearch:
             new_state.world.evolve()
             
         # Apply deterministic heuristic effects
+        vitals = new_state.world.physiology.vitals
         if action == "intubation":
-            new_state.world.physiology.vitals["spo2"] = min(100, new_state.world.physiology.vitals.get("spo2", 100) + 15)
+            vitals["spo2"] = min(100, vitals.get("spo2", 100) + 15)
             new_state.world.resource_manager.request_intervention_resources("intubation")
         elif action == "vasopressors":
-            new_state.world.physiology.vitals["bp_systolic"] += 20
-            new_state.world.physiology.vitals["heart_rate"] += 10
+            vitals["bp_systolic"] = vitals.get("bp_systolic", 120) + 20
+            vitals["heart_rate"] = vitals.get("heart_rate", 80) + 10
         elif action == "iv_fluids":
-            new_state.world.physiology.vitals["bp_systolic"] += 5
+            vitals["bp_systolic"] = vitals.get("bp_systolic", 120) + 5
         elif action == "blood_transfusion":
-            new_state.world.physiology.vitals["bp_systolic"] += 10
-            new_state.world.physiology.vitals["spo2"] += 5
+            vitals["bp_systolic"] = vitals.get("bp_systolic", 120) + 10
+            vitals["spo2"] = vitals.get("spo2", 98) + 5
             new_state.world.resource_manager.request_intervention_resources("blood_transfusion")
             
         return new_state

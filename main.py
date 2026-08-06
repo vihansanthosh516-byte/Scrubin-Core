@@ -3,6 +3,12 @@ from scrubin.tester.reports.console import print_report
 from scrubin.improvement.engine import ImprovementEngine
 from scrubin.improvement.executor import PatchExecutor
 from scrubin.improvement.diff_renderer import render_patch_plan
+import io
+import sys
+
+# Ensure UTF-8 output on Windows consoles (default cp1252 cannot encode arrows, etc.)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 def main():

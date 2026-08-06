@@ -57,7 +57,7 @@ class ComplicationAgent:
         for comp_id, lifecycle in self._lifecycles.items():
             transition_event = lifecycle.evaluate(tick, vitals, interventions)
             if transition_event:
-                print(f"[ComplicationAgent] tick={tick} {comp_id} transition: {transition_event.from_status} → {transition_event.to_status} ({transition_event.reason})")
+                print(f"[ComplicationAgent] tick={tick} {comp_id} transition: {transition_event.from_status} -> {transition_event.to_status} ({transition_event.reason})")
                 self._orchestrator.bus.publish(
                     "complication_transition",
                     {

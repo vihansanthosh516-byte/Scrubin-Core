@@ -28,7 +28,7 @@ from scrubin.learning.metrics import (
     CompositeMetrics,
 )
 from scrubin.learning.regret import RegretAnalyzer, RegretSummary, PolicyComparison
-from scrubin.learning.benchmarks import BenchmarkRunner, CANONICAL_BENCHMARK_POLICIES
+from scrubin.learning.benchmarks import BenchmarkRunner, BenchmarkScenario, CANONICAL_BENCHMARK_POLICIES
 from scrubin.learning.tournaments import TournamentRunner, StatisticalComparator
 
 from scrubin.learning.hybrid_priors import (
@@ -284,7 +284,14 @@ def test_regret_analyzer():
 
 
 def test_benchmark_runner():
-    runner = BenchmarkRunner(num_episodes=2)
+    # Bound scenarios so this stays a fast unit test rather than running the full
+    # CANONICAL_SCENARIOS (max_ticks up to 200), which triggers an O(T^3)
+    # cognition cascade and times out.
+    scenarios = [
+        BenchmarkScenario(scenario_id="short_a", description="short", max_ticks=10, base_seed=0),
+        BenchmarkScenario(scenario_id="short_b", description="short", max_ticks=10, base_seed=1),
+    ]
+    runner = BenchmarkRunner(num_episodes=2, scenarios=scenarios)
     suite_result = runner.run_suite({"monitor": monitor_policy, "wait": wait_policy})
     assert len(suite_result.results) > 0
 
@@ -646,7 +653,13 @@ def test_full_stack_benchmark_then_tournament():
         "wait": wait_policy,
         "random": random_policy,
     }
-    bench = BenchmarkRunner(num_episodes=2)
+    # Bound scenarios to keep the full‑stack test fast (avoids the O(T^3)
+    # cognition cascade triggered by CANONICAL_SCENARIOS' long max_ticks).
+    scenarios = [
+        BenchmarkScenario(scenario_id="fs_short_a", description="full-stack short", max_ticks=10, base_seed=0),
+        BenchmarkScenario(scenario_id="fs_short_b", description="full-stack short", max_ticks=10, base_seed=1),
+    ]
+    bench = BenchmarkRunner(num_episodes=2, scenarios=scenarios)
     suite = bench.run_suite(policies)
     assert len(suite.results) > 0
 

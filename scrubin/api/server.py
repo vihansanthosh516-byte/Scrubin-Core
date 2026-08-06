@@ -1,8 +1,9 @@
 import asyncio
 import json
+import os
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Depends, WebSocket, WebSocketDisconnect
 from typing import List
 from scrubin.procedures.registry import list_procedures as list_procedures_from_registry
 from scrubin.procedures.registry import get_procedure
@@ -26,6 +27,8 @@ from scrubin.services.simulation_service import SimulationService
 from scrubin.api.mappers import map_patient_profile_to_dto
 from scrubin.patient.profile import PATIENT_PROFILES
 from scrubin.tester.profiles.registry import PROFILES
+from scrubin.auth.dependencies import get_current_user
+from scrubin.auth.user import UserIdentity
 
 
 app = FastAPI(title="ScrubIn API", version="0.3.0")
@@ -33,9 +36,15 @@ app = FastAPI(title="ScrubIn API", version="0.3.0")
 
 manager = SessionManager()
 
+# CORS origins: read an explicit allowlist from the environment. The default keeps
+# local development ergonomic WITHOUT enabling credentialed cross-origin requests
+# from anywhere. ``allow_credentials=True`` is incompatible with ``allow_origins=["*"]``
+# and is an invalid/dangerous configuration; therefore a wildcard origin is never used.
+_DEFAULT_ORIGINS = "http://localhost:3000,http://localhost:5173,http://localhost:8000"
+_allowed = [o.strip() for o in os.getenv("SCRUBIN_ALLOWED_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -138,14 +147,29 @@ def _session_or_404(session_id: str) -> SimulationService:
     return session
 
 
+def _owned_session(session_id: str, user: UserIdentity) -> SimulationService:
+    """Return the session only if it exists AND is owned by ``user``.
+
+    Owner resolution: the in‑memory ``_owners`` map is authoritative; if a session
+    predates owner tracking it falls back to ``default_user`` ownership (matching
+    the dev‑mode auth fallback) so existing sessions remain accessible.
+    """
+    session = _session_or_404(session_id)
+    owner = manager.owner_of(session_id)
+    if owner is None:
+        owner = "default_user"
+    if owner != user.user_id:
+        raise HTTPException(status_code=403, detail=f"session {session_id} not owned by user")
+    return session
+
+
 @app.post("/session/start", response_model=StartResponse)
-def start_session(req: StartRequest):
+def start_session(req: StartRequest, user: UserIdentity = Depends(get_current_user)):
     # Existing implementation unchanged
     
     # (the body of the function follows as before)
     # Existing implementation unchanged
     
-
     if req.mode not in ("autonomous", "interactive"):
         raise HTTPException(status_code=400, detail="mode must be 'autonomous' or 'interactive'")
     session = manager.create(
@@ -155,6 +179,7 @@ def start_session(req: StartRequest):
         mode=req.mode,
         procedure_id=req.procedure_id,
         variant_id=req.variant_id,
+        owner_user_id=user.user_id,
     )
     return StartResponse(
         session_id=session.session_id,
@@ -191,8 +216,8 @@ def get_procedure_variants(procedure_id: str = Query(...)):
 
 
 @app.post("/session/tick", response_model=TickResponse)
-def tick_session(req: TickRequest):
-    session = _session_or_404(req.session_id)
+def tick_session(req: TickRequest, user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(req.session_id, user)
     session.tick_session(req.steps)
     snap = session.get_summary()
     return TickResponse(
@@ -206,8 +231,8 @@ def tick_session(req: TickRequest):
 
 
 @app.get("/session/options", response_model=OptionsResponse)
-def get_options(session_id: str = Query(...)):
-    session = _session_or_404(session_id)
+def get_options(session_id: str = Query(...), user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(session_id, user)
     return OptionsResponse(
         tick=session.current_tick(),
         options=session.get_options(),
@@ -215,8 +240,8 @@ def get_options(session_id: str = Query(...)):
 
 
 @app.get("/session/state", response_model=StateResponse)
-def get_state(session_id: str = Query(...)):
-    session = _session_or_404(session_id)
+def get_state(session_id: str = Query(...), user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(session_id, user)
     snap = session.get_snapshot()
     return StateResponse(
         tick=snap["tick"],
@@ -230,8 +255,8 @@ def get_state(session_id: str = Query(...)):
 
 
 @app.get("/session/summary", response_model=SummaryResponse)
-def get_summary(session_id: str = Query(...)):
-    session = _session_or_404(session_id)
+def get_summary(session_id: str = Query(...), user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(session_id, user)
     snap = session.get_summary()
     return SummaryResponse(
         tick=snap["tick"],
@@ -248,20 +273,22 @@ def get_summary(session_id: str = Query(...)):
 
 
 @app.get("/session/ledger", response_model=LedgerResponse)
-def get_ledger(session_id: str = Query(...), limit: int = Query(default=20, ge=1, le=500)):
-    session = _session_or_404(session_id)
+def get_ledger(session_id: str = Query(...), limit: int = Query(default=20, ge=1, le=500),
+               user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(session_id, user)
     return LedgerResponse(events=session.get_recent_events(limit))
 
 
 @app.get("/session/events", response_model=EventsSinceResponse)
-def get_events_since(session_id: str = Query(...), after: int = Query(default=-1, ge=-1)):
-    session = _session_or_404(session_id)
+def get_events_since(session_id: str = Query(...), after: int = Query(default=-1, ge=-1),
+                     user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(session_id, user)
     return EventsSinceResponse(events=session.get_events_since(after))
 
 
 @app.post("/session/decide", response_model=DecisionResponse)
-def apply_decision(req: DecisionRequest):
-    session = _session_or_404(req.session_id)
+def apply_decision(req: DecisionRequest, user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(req.session_id, user)
     result = session.apply_decision(req.option_id, req.target)
     return DecisionResponse(
         executed=result.get("executed", False),
@@ -273,8 +300,8 @@ def apply_decision(req: DecisionRequest):
 
 
 @app.post("/session/reset", response_model=ResetResponse)
-def reset_session(req: TickRequest):
-    session = _session_or_404(req.session_id)
+def reset_session(req: TickRequest, user: UserIdentity = Depends(get_current_user)):
+    session = _owned_session(req.session_id, user)
     new = manager.reset(req.session_id)
     if not new:
         raise HTTPException(status_code=404, detail=f"session {req.session_id} not found")
@@ -299,13 +326,36 @@ def get_profiles():
 
 @app.websocket("/session/{session_id}/ws")
 async def session_websocket(websocket: WebSocket, session_id: str):
-    await websocket.accept()
+    # Resolve the caller identity BEFORE accepting the handshake so that auth
+    # failures never open a stream. The same dependency used by HTTP routes is
+    # applied manually here (WebSocket endpoint supports ``Depends`` too, but we
+    # call it explicitly to control the close handshake precisely).
+    try:
+        user = get_current_user(websocket)
+    except HTTPException:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": "unauthorized"})
+        await websocket.close(code=4401)
+        return
+
     session = manager.get(session_id)
     if not session:
+        await websocket.accept()
         await websocket.send_json({"type": "error", "message": f"session {session_id} not found"})
         await websocket.close()
         return
 
+    # Ownership check (mirror of ``_owned_session`` for the WS path).
+    owner = manager.owner_of(session_id)
+    if owner is None:
+        owner = "default_user"
+    if owner != user.user_id:
+        await websocket.accept()
+        await websocket.send_json({"type": "error", "message": "session not owned by user"})
+        await websocket.close(code=4403)
+        return
+
+    await websocket.accept()
     # Send current state snapshot on connect
     session.event_queue.put_nowait({"type": "state_snapshot", "summary": session.get_summary()})
 

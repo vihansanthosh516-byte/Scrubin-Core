@@ -103,25 +103,47 @@ def _apply_event(world: SimulationWorld, ev: SurgicalEvent, authority: Any = Non
             phys = payload["physiology"]
             cardio_dict = phys.get("cardiovascular", {})
             resp_dict = phys.get("respiratory", {})
-            cardio = world.physiology.cardiovascular
-            resp = world.physiology.respiratory
-            if "map" in cardio_dict:
-                cardio = cardio.with_map(cardio_dict["map"])
-            if "heart_rate" in cardio_dict:
-                cardio = cardio.with_heart_rate(cardio_dict["heart_rate"])
-            if "compensation_active" in cardio_dict or "reserve" in cardio_dict:
-                cardio = cardio.with_compensation(
-                    cardio_dict.get("compensation_active", cardio.compensation_active),
-                    cardio_dict.get("reserve", cardio.reserve),
-                )
-            if "spo2" in resp_dict:
-                resp = resp.with_spo2(resp_dict["spo2"])
-            if "compensation_active" in resp_dict or "reserve" in resp_dict:
-                resp = resp.with_compensation(
-                    resp_dict.get("compensation_active", resp.compensation_active),
-                    resp_dict.get("reserve", resp.reserve),
-                )
-            world.physiology = replace(world.physiology, cardiovascular=cardio, respiratory=resp)
+            requires_subsystem = bool(cardio_dict) or bool(resp_dict)
+            has_subsystem = hasattr(world.physiology, "cardiovascular")
+            if requires_subsystem and not has_subsystem:
+                # Legacy mutable PhysiologyState only carries a flat vitals dict;
+                # map the cardiovascular/respiratory fields back onto vitals so
+                # downstream consumers still see updated values.
+                vitals = getattr(world.physiology, "vitals", {})
+                if "map" in cardio_dict:
+                    vitals["map"] = cardio_dict["map"]
+                if "heart_rate" in cardio_dict:
+                    vitals["heart_rate"] = cardio_dict["heart_rate"]
+                if "spo2" in resp_dict:
+                    vitals["spo2"] = resp_dict["spo2"]
+                world.physiology = replace(world.physiology, vitals=vitals)
+            elif has_subsystem:
+                cardio = world.physiology.cardiovascular
+                resp = world.physiology.respiratory
+                if "map" in cardio_dict:
+                    cardio = cardio.with_map(cardio_dict["map"])
+                if "heart_rate" in cardio_dict:
+                    cardio = cardio.with_heart_rate(cardio_dict["heart_rate"])
+                if "compensation_active" in cardio_dict or "reserve" in cardio_dict:
+                    cardio = cardio.with_compensation(
+                        cardio_dict.get("compensation_active", cardio.compensation_active),
+                        cardio_dict.get("reserve", cardio.reserve),
+                    )
+                if "spo2" in resp_dict:
+                    resp = resp.with_spo2(resp_dict["spo2"])
+                if "compensation_active" in resp_dict or "reserve" in resp_dict:
+                    resp = resp.with_compensation(
+                        resp_dict.get("compensation_active", resp.compensation_active),
+                        resp_dict.get("reserve", resp.reserve),
+                    )
+                world.physiology = replace(world.physiology, cardiovascular=cardio, respiratory=resp)
+            else:
+                # No subsystem fields and no subsystem attributes — apply flat vital deltas.
+                vitals = getattr(world.physiology, "vitals", {})
+                for vk, vv in {**cardio_dict, **resp_dict}.items():
+                    if isinstance(vv, (int, float)):
+                        vitals[vk] = vv
+                world.physiology = replace(world.physiology, vitals=vitals)
         if "complications" in payload:
             for comp_dict in payload["complications"]:
                 comp = ComplicationState.from_dict(comp_dict)

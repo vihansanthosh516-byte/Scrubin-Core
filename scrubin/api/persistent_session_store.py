@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json, os, hashlib
+import json, os, hashlib, re
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple
 
@@ -8,6 +8,21 @@ from .serialization import serialize_worldstate, deserialize_worldstate
 from scrubin.world.state import WorldState
 
 SCHEMA_VERSION = 1
+
+# Safe session identifiers: alphanumeric, underscore, hyphen; 1-64 chars.
+# Rejects path separators, dots (no ".", ".."), and control chars.
+_SESSION_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
+def _validate_session_id(session_id: str) -> str:
+    """Return ``session_id`` if safe, else raise ``ValueError``.
+
+    Prevents path traversal: only ``[A-Za-z0-9_-]`` up to 64 chars are allowed,
+    which excludes ``..``, ``/``, ``\\``, and NUL bytes.
+    """
+    if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id):
+        raise ValueError(f'unsafe session_id: {session_id!r}')
+    return session_id
 
 @dataclass(frozen=True, slots=True)
 class SessionMetadata:
@@ -34,7 +49,9 @@ class PersistentSessionStore:
         os.makedirs(self.storage_dir, exist_ok=True)
 
     def _session_path(self, session_id: str) -> str:
-        return os.path.join(self.storage_dir, f'{session_id}.json')
+        _validate_session_id(session_id)
+        # basename as defense-in-depth even though the regex already rejects separators
+        return os.path.join(self.storage_dir, os.path.basename(f'{session_id}.json'))
 
     def _write_file(self, path: str, data: Dict) -> None:
         with open(path, 'w', encoding='utf-8') as f:

@@ -257,8 +257,13 @@ def test_benchmark_runner_single_scenario():
 
 
 def test_benchmark_runner_suite():
-    runner = BenchmarkRunner(num_episodes=2)
-    short = BenchmarkScenario(scenario_id="short", description="short", max_ticks=10, base_seed=0)
+    # Use bounded scenarios so this stays a fast unit test rather than a
+    # multi‑minute integration run over CANONICAL_SCENARIOS (max_ticks up to 200).
+    scenarios = [
+        BenchmarkScenario(scenario_id="short_a", description="short", max_ticks=10, base_seed=0),
+        BenchmarkScenario(scenario_id="short_b", description="short", max_ticks=10, base_seed=1),
+    ]
+    runner = BenchmarkRunner(num_episodes=2, scenarios=scenarios)
     policies = {"monitor": monitor_policy, "wait": wait_policy}
     suite = runner.run_suite(policies, suite_name="test_suite")
     assert suite.suite_name == "test_suite"
