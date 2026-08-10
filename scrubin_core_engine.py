@@ -475,12 +475,86 @@ DECAY_RATES = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Dynamic patient physiology
+# ─────────────────────────────────────────────────────────────────────────────
+# Every session rolls a unique, medically plausible patient presentation from
+# the session seed. Deltas adjust the procedure's own baseline (e.g. an already
+# febrile appendicitis patient) by a moderate amount — the disease state stays,
+# but no two patients are identical, and some present badly (septic/hypoxemic).
+
+PATIENT_PRESENTATION_LABELS = {
+    "compensated":  "Compensated / euvolaemic",
+    "anxious":      "Anxious / mild sympathetic drive",
+    "hypertensive": "Hypertensive",
+    "dehydrated":   "Dehydrated / volume-contracted",
+    "septic":       "Early sepsis / systemic inflammation",
+    "hypoxemic":    "Mild hypoxemia / reduced pulmonary reserve",
+    "fit":          "Physiologically fit / resting bradycardia",
+}
+
+PATIENT_PRESENTATION_DELTAS = {
+    "compensated":  {},
+    "anxious":      {"heart_rate": +8.0, "bp_systolic": +5.0, "bp_diastolic": +3.0, "respiratory_rate": +2.0},
+    "hypertensive": {"heart_rate": -2.0, "bp_systolic": +16.0, "bp_diastolic": +9.0},
+    "dehydrated":   {"heart_rate": +6.0, "bp_systolic": -6.0, "bp_diastolic": -4.0, "temperature": +0.2},
+    "septic":       {"heart_rate": +12.0, "bp_systolic": -5.0, "bp_diastolic": -3.0, "spo2": -1.5, "respiratory_rate": +3.0, "temperature": +0.5},
+    "hypoxemic":    {"heart_rate": +4.0, "spo2": -3.0, "respiratory_rate": +3.0},
+    "fit":          {"heart_rate": -7.0, "bp_systolic": -4.0, "bp_diastolic": -2.0, "spo2": +1.0},
+}
+
+# Patients never START a case already inside an active complication trigger
+# zone: the crisis has to DEVELOP during the operation (drift, step stress, or
+# the moment you cut), not be pre-triggered at tick 1. These guardrails sit just
+# outside the physiologic thresholds in COMPLICATION_TRIGGERS — a patient can
+# begin visibly sick (borderline BP 90, febrile 38.2) and then cross the line
+# mid-case, which reads as "the surgery is making them worse".
+STARTING_VITAL_GUARDRAILS = {
+    "bp_systolic":      (90.0, "max"),   # hemorrhage trigger < 88
+    "bp_diastolic":     (55.0, "max"),
+    "spo2":             (93.5, "max"),   # hypoxia trigger < 93
+    "temperature":      (38.2, "min"),   # infection trigger > 38.3
+    "heart_rate":       (133.0, "min"),  # arrhythmia trigger > 135
+    "respiratory_rate": (25.5, "min"),   # thrombosis trigger > 26
+}
+
+ASA_MULTIPLIERS = {1: 0.8, 2: 1.0, 3: 1.3}          # presentation severity scaling
+ASA_DETERIORATION = {1: 0.9, 2: 1.0, 3: 1.18}       # sicker patients decline faster
+ASA_LABELS = {
+    1: "ASA I (healthy)",
+    2: "ASA II (mild systemic disease)",
+    3: "ASA III (severe systemic disease)",
+}
+
+# Surgical-step physiologic responses (sympathetic surge on incision, vagal
+# traction bradycardia, positional hypotension…). Applied transiently over a
+# couple of ticks so the OR monitor visibly reacts to what the trainee does.
+STEP_VITAL_EFFECTS = {
+    "access":   {"heart_rate": +8.0, "bp_systolic": +10.0, "bp_diastolic": +5.0},  # painful stimulation / incision
+    "exposure": {"heart_rate": -9.0, "bp_systolic": -5.0, "bp_diastolic": -3.0},   # visceral traction → vagal
+    "dissect":  {"heart_rate": +5.0, "bp_systolic": +4.0, "bp_diastolic": +2.0},
+    "core":     {"heart_rate": +4.0, "bp_systolic": +3.0, "bp_diastolic": +2.0},
+    "position": {"heart_rate": -4.0, "bp_systolic": -6.0, "bp_diastolic": -4.0},   # positional hypotension
+    "vessel":   {"heart_rate": +6.0, "bp_systolic": +5.0, "bp_diastolic": +3.0},
+    "closure":  {"heart_rate": -3.0, "bp_systolic": -2.0},
+}
+
+# Step kinds where intraoperative bleeding can occur even with correct
+# technique (friable tissue, anomalous vessels) — the "cut and it bleeds" cases.
+STEP_BLEED_KINDS = ("vessel", "dissect", "access")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Orchestrator
 # ─────────────────────────────────────────────────────────────────────────────
 
 class SimulationOrchestrator:
     def __init__(self, seed: int, procedure_id: str):
         self.rng = DeterministicRNG(seed)
+        # Warm up the main stream: this xorshift32's early outputs are tiny for
+        # small seeds, which would skew the step-modifier rolls. The profile /
+        # complication / decision engines all use clones taken BEFORE this.
+        for _ in range(8):
+            self.rng.next()
         self.procedure = get_procedure(procedure_id)
         if self.procedure is None:
             raise RuntimeError(f"Unknown procedure: {procedure_id}")
@@ -533,14 +607,184 @@ class SimulationOrchestrator:
         # Human-readable death cause, set by check_mortality().
         self.death_reason: Optional[str] = None
 
+        # Unique per-session physiology (ASA class + presentation) rolled from
+        # the seed, applied to starting AND homeostatic vitals.
+        self.patient_profile = self._generate_patient_profile()
+        # Intraoperative bleeding can occur at most once per run.
+        self.step_bleed_fired = False
+        self._bleed_step_rolled = False
 
-    def next(self) -> dict:
+    def _generate_patient_profile(self) -> dict:
+        """Roll a unique ASA class + physiologic presentation from the session
+        seed and adjust the patient's starting AND homeostatic vitals so every
+        run feels different — and some patients present badly."""
+        rng = self.rng.clone()
+        # Warm up: this xorshift32's first output is proportional to the seed,
+        # so rolls read straight off the top would all land in the first bucket.
+        for _ in range(3):
+            rng.next()
+        roll = rng.next_float(0.0, 1.0)
+        if roll < 0.30:
+            presentation = "compensated"
+        elif roll < 0.45:
+            presentation = "anxious"
+        elif roll < 0.58:
+            presentation = "hypertensive"
+        elif roll < 0.72:
+            presentation = "dehydrated"
+        elif roll < 0.86:
+            presentation = "septic"
+        elif roll < 0.93:
+            presentation = "hypoxemic"
+        else:
+            presentation = "fit"
+
+        asa_roll = rng.next_float(0.0, 1.0)
+        asa = 1 if asa_roll < 0.30 else (2 if asa_roll < 0.70 else 3)
+
+        deltas = PATIENT_PRESENTATION_DELTAS[presentation]
+        mult = ASA_MULTIPLIERS[asa]
+        profile = {
+            "asaClass": asa,
+            "asaLabel": ASA_LABELS[asa],
+            "presentation": presentation,
+            "presentationLabel": PATIENT_PRESENTATION_LABELS[presentation],
+        }
+
+        # Apply to the live vitals AND the homeostatic baseline so the drift
+        # engine doesn't pull the patient back to the static registry values.
+        for key, delta in deltas.items():
+            applied = round(delta * mult, 1)
+            if key in self.vitals_engine.vitals:
+                self.vitals_engine.vitals[key] += applied
+            if key in self.vitals_engine.baseline_vitals:
+                self.vitals_engine.baseline_vitals[key] += applied
+        # Starting guardrails: no patient begins inside a trigger zone. The
+        # sickest presentations land ON the edge (BP 90, temp 38.2) so their
+        # complication develops as the case proceeds.
+        for vv in (self.vitals_engine.vitals, self.vitals_engine.baseline_vitals):
+            for key, (limit, mode) in STARTING_VITAL_GUARDRAILS.items():
+                if key not in vv:
+                    continue
+                if mode == "max":
+                    vv[key] = max(limit, vv[key])
+                else:
+                    vv[key] = min(limit, vv[key])
+        self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
+        self.vitals_engine.baseline_vitals = clamp_vitals(self.vitals_engine.baseline_vitals)
+
+        # Sicker patients: faster deterioration.
+        risk = self.procedure["initialState"]["riskProfile"]
+        risk["deterioration_rate"] = round(risk.get("deterioration_rate", 1.0) * ASA_DETERIORATION[asa], 3)
+        return profile
+
+    def _apply_step_modifier(self, step_kind: Optional[str], step_label: Optional[str]) -> Optional[dict]:
+        """Real-time physiologic response to the surgical step just performed:
+        transient vital shifts (incision → sympathetic surge, traction → vagal
+        bradycardia) and, on vessel/dissection steps, a chance of intraoperative
+        bleeding even with correct technique."""
+        if not step_kind:
+            return None
+        kind = step_kind.lower()
+
+        effect = STEP_VITAL_EFFECTS.get(kind)
+        if effect:
+            scaled = {k: round(v * self.rng.next_float(0.7, 1.3), 2) for k, v in effect.items()}
+            # Apply the shift IMMEDIATELY so the OR monitor reacts the moment the
+            # step lands, then schedule the reversal over the next two ticks.
+            for key, val in scaled.items():
+                if key in self.vitals_engine.vitals:
+                    self.vitals_engine.vitals[key] += val
+            self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
+            reversal = {k: -v for k, v in scaled.items()}
+            self.vitals_engine.apply_intervention(reversal, spread_over_ticks=2, current_tick=self._tick)
+            self.events.append(f"Physiologic response to step: {kind}")
+
+        # Intraoperative bleeding — rare ("sometimes bad"), at most once per run.
+        # The FIRST surgical step gets a higher "signature moment" chance (the
+        # incision can always bleed) — later steps roll lower odds.
+        if (
+            kind in STEP_BLEED_KINDS
+            and self.active_complication is None
+            and not self.completed
+            and not self.step_bleed_fired
+        ):
+            # The FIRST surgical step is the signature "moment you cut" — it
+            # carries the highest surprise-bleed odds. Later steps roll lower
+            # so the case stays mostly clean with the occasional crisis.
+            if self._bleed_step_rolled:
+                base = 0.07 if kind == "vessel" else 0.04
+            else:
+                base = 0.16 if kind == "vessel" else 0.11
+            self._bleed_step_rolled = True
+            asa_mult = ASA_MULTIPLIERS.get(self.patient_profile["asaClass"], 1.0)
+            risk = self.procedure["initialState"]["riskProfile"].get("base_complication_chance", 0.2)
+            chance = base * asa_mult * (0.7 + 0.6 * risk)
+            if self.rng.next_float(0.0, 1.0) < chance:
+                self.step_bleed_fired = True
+                return self._enter_step_bleed(kind, step_label)
+        return None
+
+    def _enter_step_bleed(self, kind: str, step_label: Optional[str]) -> Optional[dict]:
+        """Intraoperative bleeding that surprises the surgeon: correct technique,
+        friable tissue / anomalous vessel. No reserve penalty (it is not a
+        mistake) — the patient is just in crisis and must be tended to."""
+        allowed = self.procedure.get("allowedComplications") or list(self.comp_engine.allowed)
+        if "hemorrhage" in allowed:
+            comp = "hemorrhage"
+        else:
+            candidates = [c for c in ("hemorrhage", "infection", "hypoxia", "cardiac_arrhythmia") if c in allowed]
+            if not candidates:
+                return None
+            comp = candidates[0]
+        step = step_label or f"the {kind} step"
+        cause = f"Intraoperative bleeding during '{step}' — friable tissue despite correct technique."
+        self.mode = "branched"
+        self.complication_count += 1
+        self.active_complication = comp
+        self.complication_source = "spontaneous"
+        self.complication_cause = cause
+        self.complication_history.append({
+            "complication": comp,
+            "source": "spontaneous",
+            "cause": cause,
+            "tick": self._tick,
+            "reserve": self.physiological_reserve,
+            "resolved": False,
+            "resolvedTick": None,
+        })
+        effects = COMPLICATION_VITAL_EFFECTS.get(comp)
+        if effects:
+            for key, val in effects.items():
+                if val is not None and key in self.vitals_engine.vitals:
+                    self.vitals_engine.vitals[key] += val * 0.25
+            self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
+        self.events.append(
+            f"⚠️ INTRAOPERATIVE BLEEDING: {comp.replace('_', ' ').upper()} during '{step}' (Reserve: {self.physiological_reserve}%)"
+        )
+        procedure_phase = self._procedure_phase()
+        self.pending_decision = self.decision_engine.generate_decision(
+            self._tick, self.vitals_engine.snapshot(), "active_complication", comp, procedure_phase
+        )
+        self.pending_decision_state = {"tick": self._tick, "decisionId": self.pending_decision["id"], "resolved": False}
+        return self._build_result(None)
+
+    def next(self, step_label: Optional[str] = None, step_kind: Optional[str] = None) -> dict:
         if self.completed:
             return self._build_result(None)
 
         if self.mode == "stock":
             self._tick += 1
             self.events = []
+            if self._tick == 1:
+                self.events.append(
+                    f"Patient profile: {self.patient_profile['asaLabel']} — {self.patient_profile['presentationLabel']}."
+                )
+            # The step just completed can move the physiology (incision surge,
+            # traction bradycardia) — or, on vessel steps, bleed.
+            bleed = self._apply_step_modifier(step_kind, step_label)
+            if bleed:
+                return bleed
             vitals_before = self.vitals_engine.snapshot()
             # Progressive deterioration: the patient's physiology declines as the
             # case advances. Complications are CAUSAL — they develop when a
@@ -580,7 +824,7 @@ class SimulationOrchestrator:
         self.max_score += 10
         return self._build_result(None, vitals_before, vitals_after)
 
-    def record_stock_step(self, index: int, correct: bool, label: Optional[str] = None) -> None:
+    def record_stock_step(self, index: int, correct: bool, label: Optional[str] = None, kind: Optional[str] = None) -> None:
         """Record a reported stock-step outcome so the debrief evaluation can
         see the whole case (the engine never observes stock steps otherwise —
         the client owns them and only reports correct steps via /next and wrong
@@ -588,13 +832,14 @@ class SimulationOrchestrator:
         self.stock_history.append({
             "index": int(index),
             "label": label or f"Step {int(index) + 1}",
+            "kind": kind,
             "correct": bool(correct),
             "tick": self._tick,
         })
 
-    def trigger_complication(self, complication_id: str, step_index: Optional[int] = None, step_label: Optional[str] = None) -> dict:
+    def trigger_complication(self, complication_id: str, step_index: Optional[int] = None, step_label: Optional[str] = None, step_kind: Optional[str] = None) -> dict:
         if step_index is not None:
-            self.record_stock_step(step_index, False, step_label)
+            self.record_stock_step(step_index, False, step_label, step_kind)
         self.mode = "branched"
         self.complication_count += 1
         self.physiological_reserve -= 25.0
@@ -869,6 +1114,7 @@ class SimulationOrchestrator:
             "procedureId": self.procedure["id"],
             "procedureName": self.procedure["name"],
             "patient": self.procedure["patient"],
+            "patientProfile": self.patient_profile,
             "escalationPhase": self._escalation_phase(),
             "procedurePhase": self._procedure_phase(),
             "activeComplication": self.active_complication,
@@ -1179,13 +1425,13 @@ class SimulationSession:
     def is_expired(self) -> bool:
         return (time.time() - self.last_access) > (30 * 60)
 
-    def next(self) -> dict:
+    def next(self, step_label: Optional[str] = None, step_kind: Optional[str] = None) -> dict:
         self.touch()
-        return self.orchestrator.next()
+        return self.orchestrator.next(step_label=step_label, step_kind=step_kind)
 
-    def trigger_complication(self, complication_id: str, step_index: Optional[int] = None, step_label: Optional[str] = None) -> dict:
+    def trigger_complication(self, complication_id: str, step_index: Optional[int] = None, step_label: Optional[str] = None, step_kind: Optional[str] = None) -> dict:
         self.touch()
-        return self.orchestrator.trigger_complication(complication_id, step_index, step_label)
+        return self.orchestrator.trigger_complication(complication_id, step_index, step_label, step_kind)
 
     def tick_vitals_only(self) -> dict:
         self.touch()

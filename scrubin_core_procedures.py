@@ -9,6 +9,7 @@ Matches the TypeScript originals in ``server/engine`` exactly:
 """
 
 from __future__ import annotations
+import copy
 import math
 from typing import Any, Dict, List, Optional
 
@@ -529,9 +530,9 @@ ALL_PROCEDURES: List[Dict[str, Any]] = [
         "description": "Emergency removal of an inflamed appendix. Watch for perforation and infection.",
         "patient": {
             "name": "Marcus T.", "age": 28, "sex": "Male", "weight": "95 kg", "bloodType": "O+",
-            "admission": "Acute right lower quadrant pain, rebound tenderness, fever 100.8°F",
+            "admission": "Acute right lower quadrant pain, rebound tenderness, low-grade fever 100.0°F",
             "mood": "Anxious", "comorbidities": ["obese"],
-            "baselineVitals": {"spo2": 97, "heart_rate": 110, "bp_systolic": 95, "bp_diastolic": 65, "temperature": 38.2, "respiratory_rate": 22},
+            "baselineVitals": {"spo2": 97, "heart_rate": 110, "bp_systolic": 95, "bp_diastolic": 65, "temperature": 37.8, "respiratory_rate": 22},
         },
         "initialState": {
             "vitals_override": {"heart_rate": 110, "bp_systolic": 95},
@@ -1379,8 +1380,18 @@ ALL_PROCEDURES: List[Dict[str, Any]] = [
 PROCEDURE_REGISTRY: Dict[str, Dict[str, Any]] = {p["id"]: p for p in ALL_PROCEDURES}
 
 
-def get_procedure(proc_id: str) -> Dict[str, Any]:
-    return PROCEDURE_REGISTRY.get(proc_id, PROCEDURE_REGISTRY["appendectomy"])
+def get_procedure(proc_id: str) -> Optional[Dict[str, Any]]:
+    # Return None for unknown ids so callers can 404/validate instead of
+    # silently booting the wrong surgery (previously fell back to appendectomy).
+    entry = PROCEDURE_REGISTRY.get(proc_id)
+    if entry is None:
+        return None
+    # Deep copy: engines mutate the risk profile in place (e.g. scaling
+    # deterioration_rate by ASA class). Returning the shared registry dict would
+    # let that mutation compound across every session ever created, which after
+    # enough runs explodes deterioration_rate astronomically and instantly kills
+    # every patient. Callers get an isolated snapshot they own.
+    return copy.deepcopy(entry)
 
 
 def list_procedures() -> List[Dict[str, Any]]:

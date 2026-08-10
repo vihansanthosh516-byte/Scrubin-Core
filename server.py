@@ -107,6 +107,9 @@ class NextRequest(BaseModel):
     step_index: Optional[int] = None
     step_correct: Optional[bool] = None
     step_label: Optional[str] = None
+    # Surgical-step kind (access/exposure/vessel/dissect…) — drives the
+    # physiologic step modifiers (incision surge, traction bradycardia, bleed).
+    step_kind: Optional[str] = None
 
 
 class DecideRequest(BaseModel):
@@ -134,6 +137,7 @@ class ComplicateRequest(BaseModel):
     # The stock step the trainee failed, which triggered this complication.
     step_index: Optional[int] = None
     step_label: Optional[str] = None
+    step_kind: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -154,6 +158,7 @@ def start(req: StartRequest):
         "procedure_id": state["procedureId"],
         "procedure_name": state["procedureName"],
         "patient": state["patient"],
+        "patient_profile": state.get("patientProfile"),
         "total_ticks": state["totalTicks"],
         "mode": state.get("mode", "stock"),
         "physiological_reserve": state.get("physiologicalReserve", 100.0),
@@ -173,7 +178,7 @@ def next_tick(req: NextRequest):
             req.step_index, bool(req.step_correct), req.step_label
         )
     try:
-        result = session.next()
+        result = session.next(step_label=req.step_label, step_kind=req.step_kind)
     except Exception as e:
         msg = str(e)
         if msg == "Cannot advance tick without decision":
@@ -264,7 +269,7 @@ def complicate(req: ComplicateRequest):
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
-        result = session.trigger_complication(req.complication, req.step_index, req.step_label)
+        result = session.trigger_complication(req.complication, req.step_index, req.step_label, req.step_kind)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     pending = _sanitize_decision(result["pendingDecision"]) if result["pendingDecision"] else None
