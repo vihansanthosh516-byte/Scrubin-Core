@@ -62,10 +62,15 @@ class DeterministicRNG:
             self.state = 1
 
     def next(self) -> float:
+        # Canonical Marsaglia xorshift32 (13, 17, 5) — the earlier port replaced
+        # the state with each shifted value instead of XOR-ing it back, which
+        # turned the generator into a doubling counter that dead-ends at 0 for
+        # every seed. The middle shift is unsigned (JS `>>>`) to match the
+        # original semantics.
         s = self.state
-        s = _int32(_uint32(s << 13))
-        s = _int32(s >> 17)            # arithmetic shift right on signed value
-        s = _int32(_uint32(s << 5))
+        s = _int32(s ^ _uint32(s << 13))
+        s = _int32(s ^ (_uint32(s) >> 17))
+        s = _int32(s ^ _uint32(s << 5))
         self.state = _int32(s)
         return _uint32(self.state) / 4294967296.0
 
@@ -99,11 +104,44 @@ class DeterministicRNG:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class VitalsEngine:
-    def __init__(self, initial_vitals: dict, rng: DeterministicRNG, risk_profile: dict):
+    def __init__(self, initial_vitals: dict, rng: DeterministicRNG, risk_profile: dict, baseline_vitals: dict = None):
         self.vitals = dict(initial_vitals)
         self.rng = rng
         self.risk_profile = risk_profile
+        self.baseline_vitals = dict(baseline_vitals) if baseline_vitals else dict(DEFAULT_VITALS)
         self.pending_effects: list[dict] = []  # [{ tick, effect: {key:val} }]
+        self.deterioration = 0.0  # cumulative physiologic decline for telemetry
+
+    def _deterioration_stress(self) -> float:
+        """How physiologically compromised the patient currently is (>= 1.0).
+        The deviation terms are superlinear (^1.35) so decline accelerates into
+        a vicious cycle the sicker the patient gets — an untended patient
+        spirals, a tended one declines slowly."""
+        v = self.vitals
+        extra = 0.0
+        extra += max(0.0, (95.0 - v.get("bp_systolic", 120))) / 40.0
+        extra += max(0.0, (95.0 - v.get("spo2", 98))) / 30.0
+        extra += max(0.0, (v.get("heart_rate", 80) - 100.0)) / 80.0
+        extra += max(0.0, (v.get("temperature", 37.0) - 37.8)) / 2.0
+        extra += max(0.0, (v.get("respiratory_rate", 16) - 22.0)) / 20.0
+        return 1.0 + extra ** 1.25
+
+    def apply_deterioration(self, scale: float = 1.0) -> None:
+        """Progressive physiologic failure: vitals trend downward over the case.
+        Scaled by the procedure's risk profile and by current stress, so an
+        untended patient spirals while a tended one declines slowly."""
+        severity = self._deterioration_stress()
+        rate = self.risk_profile.get("deterioration_rate", 1.0)
+        d = rate * severity * scale
+        v = self.vitals
+        v["bp_systolic"] -= 0.19 * d
+        v["bp_diastolic"] -= 0.12 * d
+        v["spo2"] -= 0.11 * d
+        v["heart_rate"] += 0.21 * d
+        v["respiratory_rate"] += 0.07 * d
+        v["temperature"] += 0.012 * d
+        self.vitals = clamp_vitals(self.vitals)
+        self.deterioration += d
 
     def snapshot(self) -> dict:
         return dict(self.vitals)
@@ -127,9 +165,12 @@ class VitalsEngine:
 
     def tick(self, tick: int) -> dict:
         recovery = self.risk_profile["recovery_speed"]
-        for key, target in DEFAULT_VITALS.items():
+        for key, target in self.baseline_vitals.items():
             current = self.vitals[key]
-            drift = self.rng.next_float(-0.3, 0.3)
+            # Physiologic noise is kept quiet so the deterioration trend (not
+            # random walk) drives the clinical course — complications then
+            # develop causally from the vitals, not from noise.
+            drift = self.rng.next_float(-0.15, 0.15)
             self.vitals[key] += (target - current) * 0.02 * recovery + drift
         due = [e for e in self.pending_effects if e["tick"] <= tick]
         for entry in due:
@@ -149,6 +190,8 @@ class ComplicationEngine:
         self.risk_profile = risk_profile
         self.active: Optional[str] = None
         self.active_since_tick = -1
+        # Consecutive ticks each complication's trigger condition has held.
+        self.danger: dict[str, int] = {}
 
     def _normalize_weights(self, w: dict) -> dict:
         filtered: dict = {}
@@ -170,30 +213,58 @@ class ComplicationEngine:
     def resolve(self) -> None:
         self.active = None
         self.active_since_tick = -1
+        self.danger = {}
 
-    def tick(self, tick: int, escalation_phase: str) -> Optional[str]:
+    def _condition_met(self, vitals: dict, vital: str, op: str, threshold: float) -> bool:
+        val = vitals.get(vital)
+        if val is None:
+            return False
+        return val < threshold if op == "<" else val > threshold
+
+    def _margin(self, vitals: dict, vital: str, op: str, threshold: float) -> float:
+        """How far past the threshold the vital is (0 when not met). Used to
+        pick the dominant derangement deterministically when several are bad."""
+        val = vitals.get(vital)
+        if val is None:
+            return 0.0
+        if op == "<":
+            return max(0.0, (threshold - val) / threshold)
+        return max(0.0, (val - threshold) / threshold)
+
+    def detect(self, tick: int, vitals: dict) -> Optional[tuple[str, str]]:
+        """Causally detect a complication from sustained vital derangement.
+
+        No dice rolls: a complication fires only when the physiology crosses a
+        scientific threshold (e.g. SpO₂ < 92%) and stays there for consecutive
+        observations. The most dominant derangement wins. Returns (complication,
+        human-readable cause) or None."""
         if self.active:
             return None
-        chance = self._spawn_chance(escalation_phase)
-        if self.rng.next() > chance:
+        candidates: list[tuple[int, float, str, str]] = []
+        for comp in self.allowed:
+            trig = COMPLICATION_TRIGGERS.get(comp)
+            if not trig:
+                continue
+            criteria = trig["criteria"]
+            need = trig.get("persistence", 2)
+            met = all(self._condition_met(vitals, v, op, t) for v, op, t in criteria)
+            if met:
+                self.danger[comp] = self.danger.get(comp, 0) + 1
+            else:
+                self.danger[comp] = 0
+            if self.danger.get(comp, 0) >= need:
+                margin = max(self._margin(vitals, v, op, t) for v, op, t in criteria)
+                cause = _format_complication_cause(comp, vitals)
+                candidates.append((self.danger[comp], margin, comp, cause))
+        if not candidates:
             return None
-        keys = list(self.weights.keys())
-        if not keys:
-            return None
-        comp = self.rng.weighted_pick(self.weights)
+        # Most sustained, then most severe derangement — deterministic.
+        candidates.sort(key=lambda c: (-c[0], -c[1], c[2]))
+        comp, cause = candidates[0][2], candidates[0][3]
         self.active = comp
         self.active_since_tick = tick
-        return comp
-
-    def _spawn_chance(self, phase: str) -> float:
-        base = self.risk_profile["base_complication_chance"]
-        return {
-            "stable_workup": base * 0.2,
-            "complication_risk": base * 0.6,
-            "active_complication": base * 1.0,
-            "crisis_management": base * 1.4,
-            "recovery_or_failure": base * 0.3,
-        }.get(phase, base)
+        self.danger = {}
+        return comp, cause
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -228,8 +299,8 @@ class DecisionEngine:
                 "feedback": {"correct": iv["correctFeedback"], "wrong": iv["wrongFeedback"]},
             })
 
-        if len(options) != 4:
-            raise RuntimeError(f"DecisionEngine: archetype {archetype} produced {len(options)} options, expected exactly 4")
+        if not (4 <= len(options) <= 8):
+            raise RuntimeError(f"DecisionEngine: archetype {archetype} produced {len(options)} options, expected 4-8")
 
         self._shuffle(options)
         urgency = self._compute_urgency(vitals, active_complication, escalation_phase)
@@ -290,9 +361,12 @@ class DecisionEngine:
         }
 
     def _pick_archetype_for_complication(self, archetypes, comp) -> str:
-        matching = [a for a in archetypes if comp in ARCHETYPE_COMPLICATION_MAP[a]]
+        matching = [a for a in archetypes if comp in ARCHETYPE_COMPLICATION_MAP.get(a, [])]
         if matching:
             return self.rng.pick(matching)
+        global_matching = [a for a, comps in ARCHETYPE_COMPLICATION_MAP.items() if comp in comps]
+        if global_matching:
+            return self.rng.pick(global_matching)
         return self.rng.pick(archetypes)
 
     def _compute_urgency(self, vitals, comp, phase) -> str:
@@ -329,6 +403,78 @@ class DecisionEngine:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Physiology-driven complication science
+# ─────────────────────────────────────────────────────────────────────────────
+# Complications are NOT random: each one is caused by a sustained, measurable
+# vital derangement. `criteria` are (vital, op, threshold) — ALL must hold.
+# `persistence` is how many consecutive observations must stay past the
+# threshold before the complication develops (2 = one observation in stock
+# mode, since each /next advances one tick). Complications without criteria
+# (anaphylaxis, nerve_injury) can only arise from surgical mistakes.
+COMPLICATION_TRIGGERS = {
+    "hypoxia":            {"criteria": [("spo2", "<", 93.0)], "persistence": 2},
+    "hemorrhage":         {"criteria": [("bp_systolic", "<", 88.0)], "persistence": 2},
+    "infection":          {"criteria": [("temperature", ">", 38.3)], "persistence": 2},
+    "cardiac_arrhythmia": {"criteria": [("heart_rate", ">", 135.0)], "persistence": 2},
+    "thrombosis":         {"criteria": [("respiratory_rate", ">", 26.0)], "persistence": 2},
+    "fluid_overload":     {"criteria": [("spo2", "<", 93.0), ("heart_rate", ">", 110.0)], "persistence": 3},
+}
+
+
+def _format_complication_cause(comp: str, vitals: dict) -> str:
+    """Human-readable scientific explanation of why the complication developed.
+
+    Threshold-honest: only claims a crossing the vitals actually show. Mistake-
+    triggered complications can fire before vitals have fully deranged, so the
+    cause then describes the oncoming physiologic failure instead of a false
+    crossing.
+    """
+    v = vitals
+    spo2 = v.get("spo2", 0)
+    bp = v.get("bp_systolic", 0)
+    hr = v.get("heart_rate", 0)
+    temp = v.get("temperature", 0)
+    rr = v.get("respiratory_rate", 0)
+
+    def fmt_val(value, prec):
+        return f"{value:.{prec}f}" if prec else f"{value:.0f}"
+
+    def fell(value, thresh, unit, label, prec=0):
+        if value < thresh:
+            return f"{label} has fallen to {fmt_val(value, prec)}{unit} — below the {thresh:g}{unit} threshold"
+        return f"{label} is {fmt_val(value, prec)}{unit} and dropping toward the {thresh:g}{unit} threshold"
+
+    def rose(value, thresh, unit, label, prec=0):
+        if value > thresh:
+            return f"{label} has climbed to {fmt_val(value, prec)}{unit} — above the {thresh:g}{unit} threshold"
+        return f"{label} is {fmt_val(value, prec)}{unit} and climbing toward the {thresh:g}{unit} threshold"
+
+    causes = {
+        "hypoxia":            f"Oxygen delivery is failing — {fell(spo2, 93.0, '%', 'SpO₂')}",
+        "hemorrhage":         f"Hypovolemic shock is developing — {fell(bp, 88.0, ' mmHg', 'systolic BP')}",
+        "infection":          f"Systemic inflammation is spreading — {rose(temp, 38.3, '°C', 'temperature', 1)}",
+        "cardiac_arrhythmia": f"Unstable tachyarrhythmia — {rose(hr, 135.0, ' bpm', 'heart rate')}",
+        "thrombosis":         f"Possible thromboembolism — {rose(rr, 26.0, '/min', 'respiratory rate')}",
+        "fluid_overload":     f"Volume overload — {fell(spo2, 93.0, '%', 'SpO₂')} with tachycardia (HR {hr:.0f} bpm)",
+        "anaphylaxis":        f"Anaphylactic reaction — airway and perfusion compromised (BP {bp:.0f} mmHg, SpO₂ {spo2:.0f}%)",
+        "nerve_injury":       f"Peripheral nerve injury — motor and sensory function at risk",
+    }
+    return causes.get(comp, f"Physiologic derangement: {comp.replace('_', ' ')}")
+
+
+DECAY_RATES = {
+    "hypoxia":             {"spo2": -2.0, "heart_rate": +2.0, "respiratory_rate": +1.0, "bp_systolic": -1.0},
+    "hemorrhage":          {"heart_rate": +4.0, "bp_systolic": -3.5, "bp_diastolic": -2.5, "spo2": -0.5, "respiratory_rate": +1.0},
+    "infection":           {"temperature": +0.3, "heart_rate": +1.5, "bp_systolic": -1.0},
+    "thrombosis":          {"heart_rate": +1.5, "bp_systolic": -2.0, "spo2": -1.0, "respiratory_rate": +0.8},
+    "cardiac_arrhythmia":  {"heart_rate": +5.5, "bp_systolic": -3.0, "bp_diastolic": -2.0, "spo2": -0.8},
+    "anaphylaxis":         {"heart_rate": +4.5, "bp_systolic": -4.5, "bp_diastolic": -3.0, "spo2": -1.5, "respiratory_rate": +1.5},
+    "nerve_injury":        {"heart_rate": +1.5, "bp_systolic": +1.0, "respiratory_rate": +0.5},
+    "fluid_overload":      {"spo2": -1.2, "heart_rate": +1.0, "bp_systolic": +1.5, "respiratory_rate": +0.8},
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Orchestrator
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -341,7 +487,12 @@ class SimulationOrchestrator:
 
         vitals = dict(self.procedure["patient"]["baselineVitals"])
         vitals.update(self.procedure["initialState"]["vitals_override"])
-        self.vitals_engine = VitalsEngine(vitals, self.rng.clone(), self.procedure["initialState"]["riskProfile"])
+        self.vitals_engine = VitalsEngine(
+            vitals,
+            self.rng.clone(),
+            self.procedure["initialState"]["riskProfile"],
+            baseline_vitals=self.procedure["patient"]["baselineVitals"]
+        )
         self.comp_engine = ComplicationEngine(
             self.rng.clone(),
             self.procedure["complicationWeights"],
@@ -359,10 +510,50 @@ class SimulationOrchestrator:
         self.decision_history: list[dict] = []
         self.active_complication: Optional[str] = None
         self.events: list[str] = []
+        self.mode = "stock"
+        self.physiological_reserve = 100.0
+        self.complication_count = 0
+        # Where the active complication came from: "mistake" (surgical error via
+        # /complicate) or "spontaneous" (physiologic deterioration). Used by the
+        # UI to label the crisis and to avoid skipping a stock step the trainee
+        # had not yet failed.
+        self.complication_source: Optional[str] = None
+        # Scientific, human-readable explanation of the active complication.
+        self.complication_cause: Optional[str] = None
+        # Tick on which the last complication resolved — short cooldown before
+        # the physiology can trigger another, so the trainee gets a breather.
+        self.last_resolved_tick = -10
+        # ── Debrief evaluation data (persistent across tick resets) ──
+        # Every stock step the client reports (via /next on correct, /complicate
+        # on wrong). `self.events` is reset each tick, so this is the durable
+        # record the post-case evaluation is built from.
+        self.stock_history: list[dict] = []
+        # Every complication that developed, with source/cause/tick/resolution.
+        self.complication_history: list[dict] = []
+        # Human-readable death cause, set by check_mortality().
+        self.death_reason: Optional[str] = None
+
 
     def next(self) -> dict:
         if self.completed:
             return self._build_result(None)
+
+        if self.mode == "stock":
+            self._tick += 1
+            self.events = []
+            vitals_before = self.vitals_engine.snapshot()
+            # Progressive deterioration: the patient's physiology declines as the
+            # case advances. Complications are CAUSAL — they develop when a
+            # vital crosses its scientific threshold and stays there.
+            self.vitals_engine.apply_deterioration()
+            vitals_after = self.vitals_engine.tick(self._tick)
+            cooldown_ok = self._tick - self.last_resolved_tick >= 3
+            trigger = self.comp_engine.detect(self._tick, vitals_after) if cooldown_ok else None
+            if trigger:
+                comp, cause = trigger
+                return self._enter_spontaneous_complication(comp, cause)
+            return self._build_result(None, vitals_before, vitals_after)
+
         if self.pending_decision_state and not self.pending_decision_state["resolved"]:
             raise RuntimeError("Cannot advance tick without decision")
 
@@ -370,27 +561,202 @@ class SimulationOrchestrator:
         self.events = []
 
         vitals_before = self.vitals_engine.snapshot()
+
+        if self.mode == "branched":
+            self.decay_vitals()
+            # An untended patient keeps declining even while a complication is active.
+            self.vitals_engine.apply_deterioration(0.15)
+            if self.check_mortality():
+                return self._build_result(None, vitals_before, self.vitals_engine.snapshot())
+
         escalation = self._escalation_phase()
-
-        spawned = self.comp_engine.tick(self._tick, escalation)
-        if spawned:
-            self.active_complication = spawned
-            self.vitals_engine.apply_complication(spawned, self._complication_severity(escalation))
-            self.events.append(f"Complication: {spawned.replace('_', ' ')}")
-
-        if not spawned and self.active_complication and not self.comp_engine.get_active():
-            self.active_complication = None
-
-        vitals_after_complication = self.vitals_engine.snapshot()
         procedure_phase = self._procedure_phase()
         self.pending_decision = self.decision_engine.generate_decision(
-            self._tick, vitals_after_complication, escalation, self.active_complication, procedure_phase
+            self._tick, self.vitals_engine.snapshot(), escalation, self.active_complication, procedure_phase
         )
         self.pending_decision_state = {"tick": self._tick, "decisionId": self.pending_decision["id"], "resolved": False}
 
         vitals_after = self.vitals_engine.tick(self._tick)
         self.max_score += 10
         return self._build_result(None, vitals_before, vitals_after)
+
+    def record_stock_step(self, index: int, correct: bool, label: Optional[str] = None) -> None:
+        """Record a reported stock-step outcome so the debrief evaluation can
+        see the whole case (the engine never observes stock steps otherwise —
+        the client owns them and only reports correct steps via /next and wrong
+        steps via /complicate)."""
+        self.stock_history.append({
+            "index": int(index),
+            "label": label or f"Step {int(index) + 1}",
+            "correct": bool(correct),
+            "tick": self._tick,
+        })
+
+    def trigger_complication(self, complication_id: str, step_index: Optional[int] = None, step_label: Optional[str] = None) -> dict:
+        if step_index is not None:
+            self.record_stock_step(step_index, False, step_label)
+        self.mode = "branched"
+        self.complication_count += 1
+        self.physiological_reserve -= 25.0
+
+        if self.physiological_reserve <= 0:
+            self.mode = "deceased"
+            self.completed = True
+            self.death_reason = "Irreversible Decompensatory Shock (Physiological reserve exhausted)"
+            self.events.append("🔴 CRITICAL FAILURE: Irreversible Decompensatory Shock (Physiological reserve exhausted).")
+            self.complication_history.append({
+                "complication": complication_id,
+                "source": "mistake",
+                "cause": self.death_reason,
+                "tick": self._tick,
+                "reserve": self.physiological_reserve,
+                "resolved": False,
+                "resolvedTick": None,
+            })
+            return self._build_result(None)
+
+        self.active_complication = complication_id
+        self.complication_source = "mistake"
+        self.complication_cause = _format_complication_cause(complication_id, self.vitals_engine.snapshot())
+        self.complication_history.append({
+            "complication": complication_id,
+            "source": "mistake",
+            "cause": self.complication_cause,
+            "tick": self._tick,
+            "reserve": self.physiological_reserve,
+            "resolved": False,
+            "resolvedTick": None,
+        })
+        
+        # Apply initial complication vital hit immediately (50% of the total effect)
+        effects = COMPLICATION_VITAL_EFFECTS.get(complication_id)
+        if effects:
+            for key, val in effects.items():
+                if val is not None:
+                    self.vitals_engine.vitals[key] += val * 0.5
+            self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
+            
+        self.events.append(f"⚠️ COMPLICATION TRIGGERED: {complication_id.replace('_', ' ').upper()} (Reserve: {self.physiological_reserve}%)")
+        
+        # Generate recovery decision
+        procedure_phase = self._procedure_phase()
+        escalation = "active_complication"
+        self.pending_decision = self.decision_engine.generate_decision(
+            self._tick, self.vitals_engine.snapshot(), escalation, complication_id, procedure_phase
+        )
+        self.pending_decision_state = {"tick": self._tick, "decisionId": self.pending_decision["id"], "resolved": False}
+        
+        return self._build_result(None)
+
+    def _enter_spontaneous_complication(self, complication_id: str, cause: str) -> dict:
+        """The patient's own physiology fails: sustained vital derangement caused
+        this complication. It does not cost physiological reserve (reserve is the
+        penalty meter for surgical mistakes) but the patient is now in crisis
+        and must be tended to."""
+        self.mode = "branched"
+        self.complication_count += 1
+        self.active_complication = complication_id
+        self.complication_source = "spontaneous"
+        self.complication_cause = cause
+        self.complication_history.append({
+            "complication": complication_id,
+            "source": "spontaneous",
+            "cause": cause,
+            "tick": self._tick,
+            "reserve": self.physiological_reserve,
+            "resolved": False,
+            "resolvedTick": None,
+        })
+
+        # Apply the complication's initial vital hit gently (25% of total
+        # effect): spontaneous crises come from slow deterioration, not a
+        # surgical misstep, so the instant damage is much softer than the
+        # mistake-triggered path (which uses 50%).
+        effects = COMPLICATION_VITAL_EFFECTS.get(complication_id)
+        if effects:
+            for key, val in effects.items():
+                if val is not None:
+                    self.vitals_engine.vitals[key] += val * 0.25
+            self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
+
+        self.events.append(
+            f"⚠️ PATIENT DETERIORATING: {complication_id.replace('_', ' ').upper()} developed spontaneously (Reserve: {self.physiological_reserve}%)"
+        )
+
+        # Generate the recovery decision the trainee must tend to
+        procedure_phase = self._procedure_phase()
+        escalation = "active_complication"
+        self.pending_decision = self.decision_engine.generate_decision(
+            self._tick, self.vitals_engine.snapshot(), escalation, complication_id, procedure_phase
+        )
+        self.pending_decision_state = {"tick": self._tick, "decisionId": self.pending_decision["id"], "resolved": False}
+
+        return self._build_result(None)
+
+    def decay_vitals(self):
+        if self.mode != "branched":
+            return
+
+        # Science-based reserve drain based on critical vitals
+        v = self.vitals_engine.snapshot()
+        bp = v.get("bp_systolic", 120)
+        spo2 = v.get("spo2", 98)
+
+        if bp < 70 or spo2 < 85:
+            self.physiological_reserve -= 2.5
+            self.events.append(f"⚠️ Physiological reserve draining due to ischemia/hypoxia: {self.physiological_reserve}%")
+
+        comp = self.active_complication
+        if not comp or comp not in DECAY_RATES:
+            return
+        rates = DECAY_RATES[comp]
+        for key, val in rates.items():
+            self.vitals_engine.vitals[key] += val
+        self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
+
+    def check_mortality(self) -> bool:
+        v = self.vitals_engine.snapshot()
+        reasons = []
+        if self.physiological_reserve <= 0:
+            reasons.append("Irreversible Multi-Organ Failure (Physiological reserve depleted)")
+        if v["bp_systolic"] < 40:
+            reasons.append("Severe Hypotension (BP < 40)")
+        if v["spo2"] < 65:
+            reasons.append("Severe Hypoxia (SpO2 < 65%)")
+        if v["heart_rate"] > 180:
+            reasons.append("Uncontrolled tachyarrhythmia (HR > 180)")
+        if v["heart_rate"] < 30:
+            reasons.append("Severe bradycardia (HR < 30)")
+
+        if reasons:
+            self.mode = "deceased"
+            self.completed = True
+            self.death_reason = ", ".join(reasons)
+            self.events.append(f"🔴 CRITICAL FAILURE: Patient died of {self.death_reason}.")
+            return True
+        return False
+
+    def tick_vitals_only(self) -> dict:
+        if self.completed:
+            return self.get_state()
+            
+        vitals_before = self.vitals_engine.snapshot()
+        
+        if self.mode == "stock":
+            # Gentle real-time decline so the deteriorating patient is visible
+            # between steps, plus normal drift/recovery around baseline.
+            self.vitals_engine.apply_deterioration(0.05)
+            self.vitals_engine.tick(self._tick)
+        elif self.mode == "branched":
+            # Decay vitals based on active complication
+            self.decay_vitals()
+            # Check mortality
+            if self.check_mortality():
+                return self.get_state()
+            # Also run normal vitals engine tick for normal drift/recovery
+            self.vitals_engine.tick(self._tick)
+            
+        return self.get_state()
 
     def submit_decision(self, decision_id: str, option_id: str) -> dict:
         if not self.pending_decision or self.pending_decision["id"] != decision_id:
@@ -399,6 +765,9 @@ class SimulationOrchestrator:
             raise RuntimeError("No pending decision to resolve")
 
         vitals_before = self.vitals_engine.snapshot()
+        # Capture the complication source before resolution clears it, so the
+        # client can tell a spontaneous crisis (no step skipped) from a mistake.
+        source_before = self.complication_source
         eval_ = self.decision_engine.evaluate_decision(self.pending_decision, option_id, vitals_before, self.active_complication)
         self.score += eval_["scoreDelta"]
 
@@ -406,20 +775,47 @@ class SimulationOrchestrator:
             self.vitals_engine.apply_intervention(eval_["vitalsEffect"], 3, self._tick)
             self.events.append(eval_["feedback"])
             if self.active_complication:
-                self.comp_engine.resolve()
-                self.active_complication = None
-                self.events.append("Complication resolved")
+                if self.physiological_reserve < 30.0:
+                    self.vitals_engine.vitals["bp_systolic"] += 10.0
+                    self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
+                    self.events.append("⚠️ Refractory Shock: Bleeding/injury controlled, but patient is in DIC/Refractory Shock! Reserve critically low!")
+                else:
+                    self.comp_engine.resolve()
+                    self.active_complication = None
+                    self.complication_source = None
+                    self.complication_cause = None
+                    self.last_resolved_tick = self._tick
+                    # Mark the currently-active complication as resolved in the
+                    # durable history the debrief evaluation reads.
+                    for entry in reversed(self.complication_history):
+                        if not entry.get("resolved"):
+                            entry["resolved"] = True
+                            entry["resolvedTick"] = self._tick
+                            break
+                    self.events.append("Complication resolved")
+                    # Transition back to stock
+                    self.mode = "stock"
         else:
             self.vitals_engine.apply_intervention(eval_["vitalsEffect"], 1, self._tick)
             if eval_["complicationTriggered"] and not self.active_complication:
                 self.active_complication = eval_["complicationTriggered"]
                 self.vitals_engine.apply_complication(eval_["complicationTriggered"], 0.7)
                 self.events.append(f"Wrong decision triggered: {eval_['complicationTriggered'].replace('_', ' ')}")
+                self.complication_history.append({
+                    "complication": eval_["complicationTriggered"],
+                    "source": "mistake",
+                    "cause": _format_complication_cause(eval_["complicationTriggered"], self.vitals_engine.snapshot()),
+                    "tick": self._tick,
+                    "reserve": self.physiological_reserve,
+                    "resolved": False,
+                    "resolvedTick": None,
+                })
             self.events.append(eval_["feedback"])
 
         result = {
             "decisionId": decision_id,
             "optionId": option_id,
+            "tick": self._tick,
             "wasCorrect": eval_["wasCorrect"],
             "complicationTriggered": eval_["complicationTriggered"],
             "vitalsBefore": vitals_before,
@@ -435,7 +831,9 @@ class SimulationOrchestrator:
             self.completed = True
             self.events.append("Simulation complete")
 
-        return self._build_result(result, result["vitalsBefore"], result["vitalsAfter"])
+        res = self._build_result(result, result["vitalsBefore"], result["vitalsAfter"])
+        res["complicationSource"] = source_before
+        return res
 
     def _build_result(self, decision_result, vitals_before=None, vitals_after=None) -> dict:
         if vitals_before is None:
@@ -454,6 +852,12 @@ class SimulationOrchestrator:
             "decisionResult": decision_result,
             "events": list(self.events),
             "score": self.score,
+            "mode": self.mode,
+            "physiologicalReserve": self.physiological_reserve,
+            "complicationCount": self.complication_count,
+            "complicationSource": self.complication_source,
+            "complicationCause": self.complication_cause,
+            "deterioration": self.vitals_engine.deterioration,
         }
 
     def get_state(self) -> dict:
@@ -477,6 +881,252 @@ class SimulationOrchestrator:
             "complicationsEncountered": sum(1 for d in self.decision_history if d["complicationTriggered"] is not None or not d["wasCorrect"]),
             "correctDecisions": sum(1 for d in self.decision_history if d["wasCorrect"]),
             "totalDecisions": len(self.decision_history),
+            "mode": self.mode,
+            "physiologicalReserve": self.physiological_reserve,
+            "complicationCount": self.complication_count,
+            "complicationSource": self.complication_source,
+            "complicationCause": self.complication_cause,
+            "deterioration": self.vitals_engine.deterioration,
+            "correctSteps": sum(1 for s in self.stock_history if s["correct"]),
+            "totalSteps": len(self.stock_history),
+            "stockHistory": list(self.stock_history),
+            "complicationHistory": list(self.complication_history),
+            "deathReason": self.death_reason,
+            # The debrief payload — present only once the case is over, which is
+            # exactly when the UI renders the Debrief tab.
+            "evaluation": self.build_evaluation() if self.completed else None,
+        }
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Post-case debrief evaluation (deterministic, built from the session's
+    # durable records: stock history, decision history, complication history)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def build_evaluation(self) -> dict:
+        """Deterministic post-case debrief payload, generated on completion or
+        death. Replaces the client-side fallback: every number is derived from
+        what actually happened in this session, so identical play yields an
+        identical report.
+
+        Contract (consumed by client/src/components/DebriefReport.tsx):
+          final_score, competency_score, safety_score, efficiency_score (0-100)
+          patient_outcome (str)
+          timeline_summary: [{tick, description}]
+          critical_events:  [{severity, tick, description}]
+          mistakes:         [{tick, description}]
+          strengths:        [{description}]
+          recommendations:  [{description}]
+        """
+        stock = list(self.stock_history)
+        decisions = list(self.decision_history)
+        comps = list(self.complication_history)
+
+        stock_correct = sum(1 for s in stock if s["correct"])
+        stock_total = len(stock)
+        dec_correct = sum(1 for d in decisions if d["wasCorrect"])
+        dec_total = len(decisions)
+        mistake_comps = sum(1 for c in comps if c["source"] == "mistake")
+        spontaneous_comps = sum(1 for c in comps if c["source"] == "spontaneous")
+        total_comps = len(comps)
+
+        is_deceased = self.mode == "deceased"
+
+        def clamp(n: float, lo: float = 0.0, hi: float = 100.0) -> int:
+            return max(int(lo), min(int(hi), round(n)))
+
+        # ── Competency: accuracy on the surgical steps + crisis decisions ──
+        stock_acc = (stock_correct / stock_total) if stock_total else 1.0
+        dec_acc = (dec_correct / dec_total) if dec_total else 1.0
+        competency = clamp(100.0 * (0.45 * stock_acc + 0.55 * dec_acc))
+        # Each complication that had to be managed cost focus and time.
+        competency = clamp(competency - 2.0 * min(total_comps, 10))
+        # An UNRESOLVED complication is the trainee's failure to tend the
+        # patient — a big competency hit (pure neglect must never score high).
+        unresolved = sum(1 for c in comps if not c.get("resolved"))
+        competency = clamp(competency - 15.0 * unresolved)
+
+        # ── Safety: patient-centered physiology ──
+        safety = 100.0
+        for c in comps:
+            resolved = c.get("resolved", False)
+            if c["source"] == "mistake":
+                safety -= 5.0 if resolved else 12.0   # preventable surgical error
+            else:
+                safety -= 2.0 if resolved else 8.0    # physiology under care
+        safety -= 7.0 * (dec_total - dec_correct)  # wrong rescue decisions
+        base = self.procedure["patient"]["baselineVitals"]
+        v = self.vitals_engine.snapshot()
+        deviation = min(
+            20.0,
+            abs(v.get("spo2", 98) - base.get("spo2", 98)) * 3.0
+            + abs(v.get("bp_systolic", 120) - base.get("bp_systolic", 120)) * 0.6
+            + abs(v.get("heart_rate", 80) - base.get("heart_rate", 80)) * 0.8
+            + abs(v.get("temperature", 37.0) - base.get("temperature", 37.0)) * 6.0
+            + abs(v.get("respiratory_rate", 16) - base.get("respiratory_rate", 16)) * 0.4,
+        )
+        safety -= deviation * 0.5
+        safety -= max(0.0, 50.0 - self.physiological_reserve) * 0.3  # reserve lost
+        if is_deceased:
+            safety = 12
+        safety = clamp(safety)
+
+        # ── Efficiency: case length vs the authored plan ──
+        authored = max(1, int(self.procedure["totalTicks"]))
+        efficiency = clamp(100.0 * authored / max(1.0, float(self._tick)))
+        # A death is never efficient — the case ended in failure, not on time.
+        if is_deceased:
+            efficiency = min(efficiency, 40)
+            competency = min(competency, 45)
+
+        final_score = clamp(0.4 * safety + 0.4 * competency + 0.2 * efficiency)
+
+        # ── Patient outcome ──
+        if is_deceased:
+            outcome = "Deceased"
+        else:
+            tol = {
+                "spo2": 4.0,
+                "bp_systolic": 18.0,
+                "bp_diastolic": 12.0,
+                "heart_rate": 22.0,
+                "temperature": 0.8,
+                "respiratory_rate": 5.0,
+            }
+            deranged = any(
+                abs(v.get(k, base.get(k, 0)) - base.get(k, 0)) > t
+                for k, t in tol.items()
+            )
+            outcome = "Stabilized / Transferred" if deranged else "Stable / Discharged"
+
+        def _step_label(s: dict) -> str:
+            return s.get("label") or f"Step {int(s.get('index', 0)) + 1}"
+
+        # ── Timeline (merged, sorted by tick, capped) ──
+        timeline: list[dict] = []
+        for s in stock:
+            timeline.append({
+                "tick": s.get("tick"),
+                "description": f"{'✅ Completed' if s['correct'] else '❌ Missed'} surgical step — {_step_label(s)}",
+            })
+        for c in comps:
+            timeline.append({
+                "tick": c.get("tick"),
+                "description": f"⚠️ {c['complication'].replace('_', ' ').upper()} developed ({c['source']})",
+            })
+            if c.get("resolved"):
+                timeline.append({
+                    "tick": c.get("resolvedTick"),
+                    "description": "✅ Complication resolved",
+                })
+        for d in decisions:
+            verdict = "✅ Correctly managed" if d["wasCorrect"] else "❌ Wrong decision"
+            timeline.append({
+                "tick": d.get("tick"),
+                "description": f"{verdict}: {d['feedback']}",
+            })
+        if is_deceased:
+            timeline.append({
+                "tick": self._tick,
+                "description": f"🔴 Patient died — {self.death_reason or 'physiologic collapse'}",
+            })
+        timeline.sort(key=lambda e: (e["tick"] if e["tick"] is not None else -1))
+        timeline = timeline[-60:]
+
+        # ── Critical events ──
+        critical: list[dict] = []
+        for c in comps:
+            critical.append({
+                "severity": "SURGICAL ERROR" if c["source"] == "mistake" else "DETERIORATION",
+                "tick": c.get("tick"),
+                "description": f"{c['complication'].replace('_', ' ').upper()} — {c.get('cause') or 'Physiologic derangement'}",
+            })
+        if is_deceased:
+            critical.append({
+                "severity": "FATAL",
+                "tick": self._tick,
+                "description": f"Patient died — {self.death_reason or 'physiologic collapse'}",
+            })
+
+        # ── Mistakes ──
+        mistakes: list[dict] = []
+        for s in stock:
+            if not s["correct"]:
+                mistakes.append({
+                    "tick": s.get("tick"),
+                    "description": f"Missed surgical step: {_step_label(s)}",
+                })
+        for d in decisions:
+            if not d["wasCorrect"]:
+                mistakes.append({"tick": d.get("tick"), "description": d["feedback"]})
+        mistakes = mistakes[-15:]
+
+        # ── Strengths ──
+        strengths: list[dict] = []
+        if stock_total:
+            strengths.append({
+                "description": f"Completed {stock_correct} of {stock_total} surgical steps correctly on first attempt",
+            })
+        if dec_total:
+            strengths.append({
+                "description": f"Correctly managed {dec_correct} of {dec_total} crisis decisions",
+            })
+        for d in decisions:
+            if d["wasCorrect"]:
+                strengths.append({"description": d["feedback"]})
+                if len(strengths) >= 7:
+                    break
+
+        # ── Recommendations (deterministic rule set) ──
+        recommendations: list[dict] = []
+        if is_deceased:
+            recommendations.append({
+                "description": "Perform a structured post-mortem debrief: reconstruct the sequence of physiologic deterioration and re-examine every decision in the final crisis phase.",
+            })
+        if total_comps:
+            last_comp = comps[-1]["complication"]
+            recommendations.append({
+                "description": f"Rehearse the rescue algorithm for {last_comp.replace('_', ' ')} — early recognition is the highest-yield skill in this procedure.",
+            })
+        if mistake_comps:
+            recommendations.append({
+                "description": "Review instrument handling and tissue planes: each missed step was a preventable surgical error that cost the patient time and physiologic reserve.",
+            })
+        if dec_total and dec_acc < 0.8:
+            recommendations.append({
+                "description": "Drill crisis decision-making: wrong rescue choices prolong the emergency and consume the patient's reserve.",
+            })
+        if efficiency < 85:
+            recommendations.append({
+                "description": "Focus on operative efficiency — every complication cycle lengthens anesthetic time and blood loss.",
+            })
+        if safety < 80:
+            recommendations.append({
+                "description": "Rehearse hemodynamic management and blood-loss thresholds before closure.",
+            })
+        if stock_total and stock_acc < 1.0:
+            recommendations.append({
+                "description": "Rehearse the step sequence end-to-end before the next case — missed steps break the sterile plan.",
+            })
+        recommendations.append({
+            "description": "Perform a formal surgical time-out at every critical phase transition — identity, site, consent, and counts.",
+        })
+        recommendations.append({
+            "description": "Debrief the team on postoperative monitoring — anticipate deterioration rather than reacting to it.",
+        })
+        recommendations = recommendations[:6]
+
+        return {
+            "final_score": final_score,
+            "competency_score": competency,
+            "safety_score": safety,
+            "efficiency_score": efficiency,
+            "patient_outcome": outcome,
+            "timeline_summary": timeline,
+            "critical_events": critical,
+            "mistakes": mistakes,
+            "strengths": strengths,
+            "recommendations": recommendations,
+            "generated_by": "scrubin-core",
         }
 
     def _escalation_phase(self) -> str:
@@ -532,6 +1182,14 @@ class SimulationSession:
     def next(self) -> dict:
         self.touch()
         return self.orchestrator.next()
+
+    def trigger_complication(self, complication_id: str, step_index: Optional[int] = None, step_label: Optional[str] = None) -> dict:
+        self.touch()
+        return self.orchestrator.trigger_complication(complication_id, step_index, step_label)
+
+    def tick_vitals_only(self) -> dict:
+        self.touch()
+        return self.orchestrator.tick_vitals_only()
 
     def submit_decision(self, decision_id: str, option_id: str) -> dict:
         self.touch()

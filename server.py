@@ -102,6 +102,11 @@ class StartRequest(BaseModel):
 
 class NextRequest(BaseModel):
     session_id: str
+    # Optional stock-step report: the client owns the stock steps, so it tells
+    # the core which step was completed so the debrief evaluation sees the case.
+    step_index: Optional[int] = None
+    step_correct: Optional[bool] = None
+    step_label: Optional[str] = None
 
 
 class DecideRequest(BaseModel):
@@ -123,6 +128,14 @@ class EvaluateRequest(BaseModel):
     history: list[Any] = field(default_factory=list)
 
 
+class ComplicateRequest(BaseModel):
+    session_id: str
+    complication: str
+    # The stock step the trainee failed, which triggered this complication.
+    step_index: Optional[int] = None
+    step_label: Optional[str] = None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Simulation routes
 # ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +155,9 @@ def start(req: StartRequest):
         "procedure_name": state["procedureName"],
         "patient": state["patient"],
         "total_ticks": state["totalTicks"],
+        "mode": state.get("mode", "stock"),
+        "physiological_reserve": state.get("physiologicalReserve", 100.0),
+        "complication_count": state.get("complicationCount", 0),
     }
 
 
@@ -150,6 +166,12 @@ def next_tick(req: NextRequest):
     session = manager.get(req.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    # Report the completed stock step before advancing the engine, so the
+    # debrief evaluation records the whole case (the client owns stock steps).
+    if req.step_index is not None:
+        session.orchestrator.record_stock_step(
+            req.step_index, bool(req.step_correct), req.step_label
+        )
     try:
         result = session.next()
     except Exception as e:
@@ -158,6 +180,7 @@ def next_tick(req: NextRequest):
             raise HTTPException(status_code=409, detail=msg)
         raise HTTPException(status_code=500, detail=msg)
     pending = _sanitize_decision(result["pendingDecision"]) if result["pendingDecision"] else None
+    state = session.state
     return {
         "tick": result["tick"],
         "vitals": result["vitalsAfter"],
@@ -167,7 +190,15 @@ def next_tick(req: NextRequest):
         "pending_decision": pending,
         "events": result["events"],
         "score": result["score"],
-        "completed": session.state["completed"],
+        "completed": state["completed"],
+        "mode": state["mode"],
+        "physiological_reserve": state.get("physiologicalReserve", 100.0),
+        "complication_count": state.get("complicationCount", 0),
+        "complication_source": state.get("complicationSource"),
+        "complication_cause": state.get("complicationCause"),
+        "evaluation": state.get("evaluation"),
+        "correct_steps": state.get("correctSteps", 0),
+        "total_steps": state.get("totalSteps", 0),
     }
 
 
@@ -209,6 +240,14 @@ def decide(req: DecideRequest):
         "completed": state["completed"],
         "correct_decisions": state["correctDecisions"],
         "total_decisions": state["totalDecisions"],
+        "mode": state["mode"],
+        "physiological_reserve": state.get("physiologicalReserve", 100.0),
+        "complication_count": state.get("complicationCount", 0),
+        "complication_source": result.get("complicationSource"),
+        "complication_cause": result.get("complicationCause"),
+        "evaluation": state.get("evaluation"),
+        "correct_steps": state.get("correctSteps", 0),
+        "total_steps": state.get("totalSteps", 0),
     }
 
 
@@ -217,6 +256,103 @@ def reset(req: ResetRequest):
     if req.session_id:
         manager.delete(req.session_id)
     return {"ok": True}
+
+
+@app.post("/complicate")
+def complicate(req: ComplicateRequest):
+    session = manager.get(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        result = session.trigger_complication(req.complication, req.step_index, req.step_label)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    pending = _sanitize_decision(result["pendingDecision"]) if result["pendingDecision"] else None
+    state = session.state
+    return {
+        "tick": result["tick"],
+        "vitals": result["vitalsAfter"],
+        "escalation_phase": result["escalationPhase"],
+        "procedure_phase": result["procedurePhase"],
+        "active_complication": result["activeComplication"],
+        "pending_decision": pending,
+        "events": result["events"],
+        "score": result["score"],
+        "completed": state["completed"],
+        "mode": state["mode"],
+        "physiological_reserve": state.get("physiologicalReserve", 100.0),
+        "complication_count": state.get("complicationCount", 0),
+        "complication_source": result.get("complicationSource"),
+        "complication_cause": result.get("complicationCause"),
+        "evaluation": state.get("evaluation"),
+        "correct_steps": state.get("correctSteps", 0),
+        "total_steps": state.get("totalSteps", 0),
+    }
+
+
+@app.post("/tick")
+def tick_session(req: NextRequest):
+    session = manager.get(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        state = session.tick_vitals_only()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    pending = _sanitize_decision(state["pendingDecision"]) if state["pendingDecision"] else None
+    return {
+        "tick": state["tick"],
+        "vitals": state["vitals"],
+        "escalation_phase": state["escalationPhase"],
+        "procedure_phase": state["procedurePhase"],
+        "active_complication": state["activeComplication"],
+        "pending_decision": pending,
+        "events": state.get("events", []),
+        "score": state["score"],
+        "completed": state["completed"],
+        "mode": state["mode"],
+        "physiological_reserve": state.get("physiologicalReserve", 100.0),
+        "complication_count": state.get("complicationCount", 0),
+        "evaluation": state.get("evaluation"),
+        "correct_steps": state.get("correctSteps", 0),
+        "total_steps": state.get("totalSteps", 0),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Procedures / scenarios / search
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@app.post("/complete")
+def complete_session(req: NextRequest):
+    session = manager.get(req.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        session.orchestrator.completed = True
+        session.orchestrator.mode = "stock"
+        state = session.state
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    pending = _sanitize_decision(state["pendingDecision"]) if state["pendingDecision"] else None
+    return {
+        "tick": state["tick"],
+        "vitals": state["vitals"],
+        "escalation_phase": state["escalationPhase"],
+        "procedure_phase": state["procedurePhase"],
+        "active_complication": state["activeComplication"],
+        "pending_decision": pending,
+        "events": state.get("events", []),
+        "score": state["score"],
+        "completed": state["completed"],
+        "mode": state["mode"],
+        "physiological_reserve": state.get("physiologicalReserve", 100.0),
+        "complication_count": state.get("complicationCount", 0),
+        "evaluation": state.get("evaluation"),
+        "correct_steps": state.get("correctSteps", 0),
+        "total_steps": state.get("totalSteps", 0),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
