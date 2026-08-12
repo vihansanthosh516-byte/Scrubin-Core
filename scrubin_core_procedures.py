@@ -182,7 +182,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
             "label": "Call for anesthesia support",
             "treats": [],
             "vitalsEffect": {},
-            "riskIfWrong": {"heart_rate": +3},
+            "riskIfWrong": {"spo2": -4, "heart_rate": +5, "respiratory_rate": +2},
             "correctFeedback": "Anesthesia team consulted. Additional expertise on the way.",
             "wrongFeedback": "Waiting for anesthesia support delayed critical intervention.",
         },
