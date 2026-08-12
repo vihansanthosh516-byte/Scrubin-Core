@@ -192,6 +192,18 @@ class ComplicationEngine:
         self.active_since_tick = -1
         # Consecutive ticks each complication's trigger condition has held.
         self.danger: dict[str, int] = {}
+        # Fresh-episode semantics: complications correctly treated stay disqualified
+        # from spontaneous re-triggering until their trigger vital clears the
+        # threshold again. Without this, a patient whose BP is still < 88 after
+        # bleeding control deterministically re-fires hemorrhage the moment the
+        # post-resolution cooldown expires — recovery becomes futile.
+        self.disqualified: set[str] = set()
+        # Post-recovery stabilization: no spontaneous re-trigger of ANY complication
+        # until the physiology clears every trigger threshold for one observation.
+        # This stops the post-cooldown whack-a-mole where the same underlying
+        # derangement (e.g. low BP after thrombosis) re-fires a different
+        # complication 3 ticks after a correct recovery.
+        self.awaiting_recovery: bool = False
 
     def _normalize_weights(self, w: dict) -> dict:
         filtered: dict = {}
@@ -210,10 +222,15 @@ class ComplicationEngine:
     def get_active(self) -> Optional[str]:
         return self.active
 
-    def resolve(self) -> None:
+    def resolve(self, comp: Optional[str] = None) -> None:
         self.active = None
         self.active_since_tick = -1
         self.danger = {}
+        if comp:
+            self.disqualified.add(comp)
+        # Enter the stabilization window — cleared on the first observation where
+        # no allowed complication's trigger criteria hold.
+        self.awaiting_recovery = True
 
     def _condition_met(self, vitals: dict, vital: str, op: str, threshold: float) -> bool:
         val = vitals.get(vital)
@@ -240,8 +257,30 @@ class ComplicationEngine:
         human-readable cause) or None."""
         if self.active:
             return None
+        # Stabilization window: after a correct recovery, hold off all spontaneous
+        # detection until the physiology clears every trigger threshold.
+        if self.awaiting_recovery:
+            still_deranged = any(
+                all(self._condition_met(vitals, v, op, t) for v, op, t in COMPLICATION_TRIGGERS.get(comp, {}).get("criteria", []))
+                for comp in self.allowed
+                if comp in COMPLICATION_TRIGGERS
+            )
+            if still_deranged:
+                return None
+            self.awaiting_recovery = False
+        # Re-arm resolved complications once their trigger derangement clears —
+        # only a NEW episode (vital recovered, then crossed again) can re-fire.
+        for comp in list(self.disqualified):
+            trig = COMPLICATION_TRIGGERS.get(comp)
+            if not trig:
+                self.disqualified.discard(comp)
+                continue
+            if not all(self._condition_met(vitals, v, op, t) for v, op, t in trig["criteria"]):
+                self.disqualified.discard(comp)
         candidates: list[tuple[int, float, str, str]] = []
         for comp in self.allowed:
+            if comp in self.disqualified:
+                continue
             trig = COMPLICATION_TRIGGERS.get(comp)
             if not trig:
                 continue
@@ -1025,7 +1064,8 @@ class SimulationOrchestrator:
                     self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
                     self.events.append("⚠️ Refractory Shock: Bleeding/injury controlled, but patient is in DIC/Refractory Shock! Reserve critically low!")
                 else:
-                    self.comp_engine.resolve()
+                    resolved_comp = self.active_complication
+                    self.comp_engine.resolve(resolved_comp)
                     self.active_complication = None
                     self.complication_source = None
                     self.complication_cause = None

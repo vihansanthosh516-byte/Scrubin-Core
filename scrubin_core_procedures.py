@@ -34,7 +34,7 @@ VITAL_RANGES: Dict[str, tuple[float, float]] = {
 
 
 def clamp_vitals(v: Dict[str, float]) -> Dict[str, float]:
-    return {
+    result = {
         "spo2": max(VITAL_RANGES["spo2"][0], min(VITAL_RANGES["spo2"][1], v["spo2"])),
         "heart_rate": max(VITAL_RANGES["heart_rate"][0], min(VITAL_RANGES["heart_rate"][1], v["heart_rate"])),
         "bp_systolic": max(VITAL_RANGES["bp_systolic"][0], min(VITAL_RANGES["bp_systolic"][1], v["bp_systolic"])),
@@ -42,6 +42,13 @@ def clamp_vitals(v: Dict[str, float]) -> Dict[str, float]:
         "temperature": max(VITAL_RANGES["temperature"][0], min(VITAL_RANGES["temperature"][1], v["temperature"])),
         "respiratory_rate": max(VITAL_RANGES["respiratory_rate"][0], min(VITAL_RANGES["respiratory_rate"][1], v["respiratory_rate"])),
     }
+    # Physiologic invariant: diastolic pressure can never reach or exceed systolic.
+    # Clamp it below systolic (keeping the systolic reading — and therefore the
+    # BP < 40 mortality check — as the anchor) so inverted readings like 39.6/61.9
+    # are impossible.
+    if result["bp_diastolic"] >= result["bp_systolic"]:
+        result["bp_diastolic"] = result["bp_systolic"] - 1.0
+    return result
 
 
 # ── Complication Types & Effects ──

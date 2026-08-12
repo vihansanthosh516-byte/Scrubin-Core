@@ -231,6 +231,7 @@ def decide(req: DecideRequest):
             "scoreDelta": 0,
             "complicationTriggered": None,
         }
+    pending = _sanitize_decision(result["pendingDecision"]) if result["pendingDecision"] else None
     state = session.state
     return {
         "tick": result["tick"],
@@ -238,6 +239,7 @@ def decide(req: DecideRequest):
         "escalation_phase": result["escalationPhase"],
         "procedure_phase": result["procedurePhase"],
         "active_complication": result["activeComplication"],
+        "pending_decision": pending,
         "decision_result": decision_result,
         "next_tick_ready": bool(result.get("pendingDecisionState", {}) and result["pendingDecisionState"].get("resolved")),
         "events": result["events"],
