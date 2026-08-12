@@ -552,6 +552,16 @@ class DecisionEngine:
 # threshold before the complication develops (2 = one observation in stock
 # mode, since each /next advances one tick). Complications without criteria
 # (anaphylaxis, nerve_injury) can only arise from surgical mistakes.
+# After a complication resolves, hold ALL spontaneous detection for this many
+# ticks so a correct recovery buys the trainee real clean play. The earlier
+# 3-tick gate let a NEW complication (e.g. infection) re-fire as soon as 7 ticks
+# after a correct hemorrhage recovery: the temp hovered just under its 38.3
+# threshold, the stabilization window closed at the first clean observation,
+# and two ticks later the fever crossed and re-entered branched mode — a ~5%
+# flake that failed the live "no re-trigger" test in CI. With an 8-tick gate
+# the soonest a spontaneous re-fire can occur is tick 10 (8 + persistence 2).
+POST_RESOLUTION_STABILIZATION_TICKS = 8
+
 COMPLICATION_TRIGGERS = {
     "hypoxia":            {"criteria": [("spo2", "<", 93.0)], "persistence": 2},
     "hemorrhage":         {"criteria": [("bp_systolic", "<", 88.0)], "persistence": 2},
@@ -735,8 +745,9 @@ class SimulationOrchestrator:
         self.complication_source: Optional[str] = None
         # Scientific, human-readable explanation of the active complication.
         self.complication_cause: Optional[str] = None
-        # Tick on which the last complication resolved — short cooldown before
-        # the physiology can trigger another, so the trainee gets a breather.
+        # Tick on which the last complication resolved — no spontaneous detection
+        # for POST_RESOLUTION_STABILIZATION_TICKS after it, so a correct recovery
+        # buys the trainee real clean play before the physiology can re-trigger.
         self.last_resolved_tick = -10
         # ── Debrief evaluation data (persistent across tick resets) ──
         # Every stock step the client reports (via /next on correct, /complicate
@@ -932,7 +943,7 @@ class SimulationOrchestrator:
             # vital crosses its scientific threshold and stays there.
             self.vitals_engine.apply_deterioration()
             vitals_after = self.vitals_engine.tick(self._tick)
-            cooldown_ok = self._tick - self.last_resolved_tick >= 3
+            cooldown_ok = self._tick - self.last_resolved_tick >= POST_RESOLUTION_STABILIZATION_TICKS
             trigger = self.comp_engine.detect(self._tick, vitals_after) if cooldown_ok else None
             if trigger:
                 comp, cause = trigger
