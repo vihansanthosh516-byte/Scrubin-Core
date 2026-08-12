@@ -24,9 +24,11 @@ from scrubin_core_procedures import (
     clamp_vitals,
     COMPLICATION_VITAL_EFFECTS,
     ARCHETYPE_COMPLICATION_MAP,
+    ARCHETYPE_PHASE_BUCKETS,
     ARCHETYPE_PROMPTS,
     ARCHETYPE_INTERVENTIONS,
     ESCALATION_LABELS,
+    classify_phase,
     list_procedures,
     get_procedure,
     procedure_exists,
@@ -318,10 +320,11 @@ class DecisionEngine:
 
     def generate_decision(self, tick, vitals, escalation_phase, active_complication, procedure_phase) -> dict:
         archetypes = self.procedure["decisionArchetypes"]
+        bucket = classify_phase(procedure_phase)
         if active_complication:
-            archetype = self._pick_archetype_for_complication(archetypes, active_complication)
+            archetype = self._pick_archetype_for_complication(archetypes, active_complication, bucket)
         else:
-            archetype = self.rng.pick(archetypes)
+            archetype = self._pick_stock_archetype(archetypes, bucket)
 
         prompt_data = ARCHETYPE_PROMPTS[archetype]
         interventions = ARCHETYPE_INTERVENTIONS[archetype]
@@ -338,10 +341,29 @@ class DecisionEngine:
                 "feedback": {"correct": iv["correctFeedback"], "wrong": iv["wrongFeedback"]},
             })
 
-        if not (4 <= len(options) <= 8):
-            raise RuntimeError(f"DecisionEngine: archetype {archetype} produced {len(options)} options, expected 4-8")
+        # Situation-aware option assembly: treating options are always offered
+        # (recovery guarantee), then decoys are drawn in TWO TIERS — the chosen
+        # archetype's own non-treating options first (thematically coherent, so
+        # e.g. observe_hemostasis reliably accompanies BLEEDING_CONTROL), then a
+        # random subset of phase-eligible options from other archetypes. This
+        # keeps the offer clinically plausible for where the surgery is AND makes
+        # consecutive decisions differ. With no active complication, the chosen
+        # archetype's low-risk options are always offered and its high-risk
+        # options are sampled.
+        if active_complication:
+            always = [o for o in options if active_complication in o["correctForComplications"]]
+            exclude = {o["id"] for o in always}
+            primary, secondary = self._decoy_pool(archetype, active_complication, bucket, exclude)
+            chosen = self._sample_options(always, primary, secondary)
+        else:
+            always = [o for o in options if self._is_low_risk(o["riskIfWrong"])]
+            decoys = [o for o in options if not self._is_low_risk(o["riskIfWrong"])]
+            chosen = self._sample_options(always, decoys, [])
 
-        self._shuffle(options)
+        if not (4 <= len(chosen) <= 8):
+            raise RuntimeError(f"DecisionEngine: archetype {archetype} produced {len(chosen)} options, expected 4-8")
+
+        self._shuffle(chosen)
         urgency = self._compute_urgency(vitals, active_complication, escalation_phase)
         self.decision_counter += 1
         decision_id = f"decision_{self.procedure['id']}_{self.decision_counter}"
@@ -355,9 +377,89 @@ class DecisionEngine:
             "archetype": archetype,
             "prompt": self._contextualize_prompt(prompt_data["prompt"], vitals, active_complication),
             "context": prompt_data["context"],
-            "options": options,
+            "options": chosen,
             "urgency": urgency,
         }
+
+    @staticmethod
+    def _is_low_risk(risk: dict) -> bool:
+        return all((v is None or abs(v) < 8) for v in risk.values())
+
+    def _decoy_pool(self, archetype: str, comp: str, bucket: str, exclude_ids: set) -> tuple:
+        """Two-tier decoy pool: (primary) the chosen archetype's own non-treating
+        options, (secondary) phase-eligible non-treating options from every other
+        archetype. Primary options are clinically coherent with the treating
+        options; secondary options add situation variety."""
+        primary = []
+        secondary = []
+        seen = set(exclude_ids)
+
+        def build(a: str, comp: str, bucket: str, seen: set) -> list:
+            out = []
+            if bucket not in ARCHETYPE_PHASE_BUCKETS[a]:
+                return out
+            for iv in ARCHETYPE_INTERVENTIONS[a]:
+                if comp in iv["treats"] or iv["id"] in seen:
+                    continue
+                seen.add(iv["id"])
+                out.append({
+                    "id": iv["id"],
+                    "label": iv["label"],
+                    "archetype": a,
+                    "correctForComplications": list(iv["treats"]),
+                    "effectOnVitals": dict(iv["vitalsEffect"]),
+                    "riskIfWrong": dict(iv["riskIfWrong"]),
+                    "feedback": {"correct": iv["correctFeedback"], "wrong": iv["wrongFeedback"]},
+                })
+            return out
+
+        primary = build(archetype, comp, bucket, seen)
+        for a in ARCHETYPE_PHASE_BUCKETS:
+            if a != archetype:
+                secondary += build(a, comp, bucket, seen)
+        return primary, secondary
+
+    def _sample_options(self, always: list, primary: list, secondary: list) -> list:
+        """Always offer `always`; draw decoys from `primary` first (shuffled),
+        then `secondary`, so the total lands in 4-8. Mirrored by the TS
+        DecisionEngine. RNG-driven, so a fixed seed replays bit-identically."""
+        total = len(always) + len(primary) + len(secondary)
+        if total < 4:
+            return list(always) + list(primary) + list(secondary)
+        target = self.rng.next_int(4, min(8, total))
+        need = min(max(target - len(always), 0), len(primary) + len(secondary))
+        if len(always) + need < 4:
+            need = min(4 - len(always), len(primary) + len(secondary))
+        if need <= 0:
+            return list(always)
+        p = list(primary)
+        self._shuffle(p)
+        if need <= len(p):
+            return list(always) + p[:need]
+        s = list(secondary)
+        self._shuffle(s)
+        return list(always) + p + s[:need - len(p)]
+
+    def _pick_stock_archetype(self, archetypes: list, bucket: str) -> str:
+        eligible = [a for a in archetypes if bucket in ARCHETYPE_PHASE_BUCKETS.get(a, [])]
+        if eligible:
+            return self.rng.pick(eligible)
+        return self.rng.pick(archetypes)
+
+    def _pick_archetype_for_complication(self, archetypes, comp, bucket: str) -> str:
+        matching = [a for a in archetypes if comp in ARCHETYPE_COMPLICATION_MAP.get(a, [])]
+        eligible = [a for a in matching if bucket in ARCHETYPE_PHASE_BUCKETS.get(a, [])]
+        if eligible:
+            return self.rng.pick(eligible)
+        if matching:
+            return self.rng.pick(matching)
+        global_matching = [a for a, comps in ARCHETYPE_COMPLICATION_MAP.items() if comp in comps]
+        global_eligible = [a for a in global_matching if bucket in ARCHETYPE_PHASE_BUCKETS.get(a, [])]
+        if global_eligible:
+            return self.rng.pick(global_eligible)
+        if global_matching:
+            return self.rng.pick(global_matching)
+        return self.rng.pick(archetypes)
 
     def evaluate_decision(self, decision, option_id, vitals, active_complication) -> dict:
         option = next((o for o in decision["options"] if o["id"] == option_id), None)
@@ -398,15 +500,6 @@ class DecisionEngine:
             "feedback": option["feedback"]["wrong"],
             "scoreDelta": self._compute_score_delta(decision["urgency"], False),
         }
-
-    def _pick_archetype_for_complication(self, archetypes, comp) -> str:
-        matching = [a for a in archetypes if comp in ARCHETYPE_COMPLICATION_MAP.get(a, [])]
-        if matching:
-            return self.rng.pick(matching)
-        global_matching = [a for a, comps in ARCHETYPE_COMPLICATION_MAP.items() if comp in comps]
-        if global_matching:
-            return self.rng.pick(global_matching)
-        return self.rng.pick(archetypes)
 
     def _compute_urgency(self, vitals, comp, phase) -> str:
         if phase == "crisis_management":

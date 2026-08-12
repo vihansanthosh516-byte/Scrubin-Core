@@ -97,6 +97,46 @@ ARCHETYPE_COMPLICATION_MAP: Dict[str, List[str]] = {
     "POST_OP_MONITORING":   ["infection", "thrombosis", "fluid_overload"],
 }
 
+# ── Procedure-phase awareness ──
+# Each procedure phase falls into one of three buckets (pre-op / intra-op /
+# post-op), and each decision archetype is only offered in the buckets where its
+# interventions make clinical sense (e.g. BLEEDING_CONTROL — cautery/ligation —
+# only while the patient is still in the OR). The engine prefers phase-eligible
+# archetypes so decisions match where the surgery actually is, falling back to
+# any eligible archetype so a complication is always resolvable.
+PHASE_BUCKETS = ["pre_op", "intra_op", "post_op"]
+
+_PHASE_PRE_KEYWORDS = ["intake", "pre-op", "preop", "evaluation", "positioning",
+                       "stabilization", "induction", "anesthesia", "consult",
+                       "planning", "template"]
+_PHASE_POST_KEYWORDS = ["post-op", "postop", "debrief", "icu", "recovery"]
+
+
+def classify_phase(name: str) -> str:
+    """Map a procedure phase NAME to a bucket. Phases that aren't recognizably
+    pre- or post-op are treated as intra-op (the default operating room state)."""
+    n = (name or "").lower()
+    for kw in _PHASE_POST_KEYWORDS:
+        if kw in n:
+            return "post_op"
+    for kw in _PHASE_PRE_KEYWORDS:
+        if kw in n:
+            return "pre_op"
+    return "intra_op"
+
+
+ARCHETYPE_PHASE_BUCKETS: Dict[str, List[str]] = {
+    "AIRWAY_STABILITY":     ["pre_op", "intra_op", "post_op"],
+    "HEMODYNAMIC_CONTROL":  ["intra_op", "post_op"],
+    "BLEEDING_CONTROL":     ["intra_op"],
+    "INFECTION_MANAGEMENT": ["intra_op", "post_op"],
+    "PAIN_MANAGEMENT":      ["intra_op", "post_op"],
+    "DIAGNOSTIC_STEP":      ["pre_op", "intra_op", "post_op"],
+    "SURGICAL_DECISION":    ["intra_op"],
+    "POST_OP_MONITORING":   ["post_op"],
+}
+
+
 ESCALATION_PHASES = [
     "stable_workup",
     "complication_risk",
