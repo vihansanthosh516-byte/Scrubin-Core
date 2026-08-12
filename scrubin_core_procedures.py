@@ -136,6 +136,16 @@ ARCHETYPE_PHASE_BUCKETS: Dict[str, List[str]] = {
     "POST_OP_MONITORING":   ["post_op"],
 }
 
+# Per-OPTION phase overrides on top of the archetype's buckets. Options not
+# listed inherit their archetype's buckets. Treating options are NEVER filtered
+# (a complication must always stay resolvable) — this governs the DECOY pool
+# only, so e.g. "Surgical exploration" never appears as a decoy during Post-Op
+# and "CT imaging" is not offered mid-case.
+OPTION_PHASE_OVERRIDES: Dict[str, List[str]] = {
+    "exploration": ["intra_op"],        # surgical exploration only in the OR
+    "imaging":     ["pre_op", "post_op"],  # no intra-operative imaging
+}
+
 
 ESCALATION_PHASES = [
     "stable_workup",

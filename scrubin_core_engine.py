@@ -28,6 +28,7 @@ from scrubin_core_procedures import (
     ARCHETYPE_PROMPTS,
     ARCHETYPE_INTERVENTIONS,
     ESCALATION_LABELS,
+    OPTION_PHASE_OVERRIDES,
     classify_phase,
     list_procedures,
     get_procedure,
@@ -67,11 +68,14 @@ class DeterministicRNG:
         # Canonical Marsaglia xorshift32 (13, 17, 5) — the earlier port replaced
         # the state with each shifted value instead of XOR-ing it back, which
         # turned the generator into a doubling counter that dead-ends at 0 for
-        # every seed. The middle shift is unsigned (JS `>>>`) to match the
-        # original semantics.
+        # every seed. The middle shift MUST be SIGNED (`s >> 17`, JS `>>`), not
+        # unsigned: JS right-shift sign-extends, and Python's `>>` on a signed
+        # int is already arithmetic — so `_uint32(s) >> 17` here produced a
+        # different stream from the JS engine (verified: draw 1 matched, draw 2
+        # diverged). This is what keeps the two engines bit-exact.
         s = self.state
         s = _int32(s ^ _uint32(s << 13))
-        s = _int32(s ^ (_uint32(s) >> 17))
+        s = _int32(s ^ (s >> 17))
         s = _int32(s ^ _uint32(s << 5))
         self.state = _int32(s)
         return _uint32(self.state) / 4294967296.0
@@ -396,10 +400,15 @@ class DecisionEngine:
 
         def build(a: str, comp: str, bucket: str, seen: set) -> list:
             out = []
-            if bucket not in ARCHETYPE_PHASE_BUCKETS[a]:
-                return out
+            archetype_buckets = ARCHETYPE_PHASE_BUCKETS[a]
             for iv in ARCHETYPE_INTERVENTIONS[a]:
                 if comp in iv["treats"] or iv["id"] in seen:
+                    continue
+                # Option-level phase filter: an option is offerable when its own
+                # bucket list (override ?? archetype) includes the current bucket.
+                # Treating options are never filtered — only decoys.
+                opt_buckets = OPTION_PHASE_OVERRIDES.get(iv["id"], archetype_buckets)
+                if bucket not in opt_buckets:
                     continue
                 seen.add(iv["id"])
                 out.append({
