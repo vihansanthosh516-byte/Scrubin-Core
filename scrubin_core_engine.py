@@ -201,7 +201,17 @@ class VitalsEngine:
                     self.vitals[key] += val
         self.pending_effects = [e for e in self.pending_effects if e["tick"] > tick]
         self.vitals = clamp_vitals(self.vitals)
+        self.cap_compensatory_bp()
         return self.snapshot()
+
+    def cap_compensatory_bp(self, hard_cap: float = 160.0) -> None:
+        """Fix: compensatory systolic spikes may never exceed 160 mmHg — or the
+        patient's own baseline, whichever is higher. A patient in hypovolemic
+        shock has no circulating volume left to generate 200+ mmHg, so the
+        old refractory loop's +10/cycle climb is physiologically impossible."""
+        ceiling = max(hard_cap, self.baseline_vitals.get("bp_systolic", 120.0))
+        if self.vitals["bp_systolic"] > ceiling:
+            self.vitals["bp_systolic"] = ceiling
 
 
 class ComplicationEngine:
@@ -754,6 +764,10 @@ class SimulationOrchestrator:
         self.mode = "stock"
         self.physiological_reserve = 100.0
         self.complication_count = 0
+        # Wrong rescue attempts during the current complication crisis. Used by
+        # the reserve-refund on resolution (Fix: renewable reserve — clean
+        # management earns reserve back, fumbles reduce the refund).
+        self._complication_wrong_attempts = 0
         # Where the active complication came from: "mistake" (surgical error via
         # /complicate) or "spontaneous" (physiologic deterioration). Used by the
         # UI to label the crisis and to avoid skipping a stock step the trainee
@@ -1014,6 +1028,7 @@ class SimulationOrchestrator:
         self.mode = "branched"
         self.complication_count += 1
         self.physiological_reserve -= 25.0
+        self._complication_wrong_attempts = 0
 
         if self.physiological_reserve <= 0:
             self.mode = "deceased"
@@ -1071,6 +1086,7 @@ class SimulationOrchestrator:
         and must be tended to."""
         self.mode = "branched"
         self.complication_count += 1
+        self._complication_wrong_attempts = 0
         self.active_complication = complication_id
         self.complication_source = "spontaneous"
         self.complication_cause = cause
@@ -1192,9 +1208,14 @@ class SimulationOrchestrator:
             self.events.append(eval_["feedback"])
             if self.active_complication:
                 if self.physiological_reserve < 30.0:
-                    self.vitals_engine.vitals["bp_systolic"] += 10.0
-                    self.vitals_engine.vitals = clamp_vitals(self.vitals_engine.vitals)
-                    self.events.append("⚠️ Refractory Shock: Bleeding/injury controlled, but patient is in DIC/Refractory Shock! Reserve critically low!")
+                    # Fix 2: no infinite phantom loop. Reserve below 30% with an
+                    # active complication is the point of no return — the engine
+                    # hard-transitions to terminal failure instead of rewarding
+                    # every correct pick with a +10 mmHg spike that never clears.
+                    self.mode = "deceased"
+                    self.completed = True
+                    self.death_reason = "Irreversible Refractory Shock / DIC (physiologic reserve critically depleted)"
+                    self.events.append("🔴 CRITICAL FAILURE: Patient has entered irreversible Refractory Shock / DIC. Standard protocols are failing.")
                 else:
                     resolved_comp = self.active_complication
                     self.comp_engine.resolve(resolved_comp)
@@ -1215,12 +1236,24 @@ class SimulationOrchestrator:
                             entry["resolvedTick"] = self._tick
                             break
                     self.events.append("Complication resolved")
+                    # Fix 1: renewable reserve — reward clean management. Refund
+                    # up to 15% reserve for a first-try rescue, minus 5% per
+                    # wrong attempt (floor 0), so a skilled surgeon can absorb
+                    # 3-4 mistakes across a long case instead of being doomed
+                    # the moment the 3rd complication fires.
+                    refund = max(0.0, 15.0 - 5.0 * self._complication_wrong_attempts)
+                    self._complication_wrong_attempts = 0
+                    if refund > 0:
+                        self.physiological_reserve = min(100.0, self.physiological_reserve + refund)
+                        self.events.append(f"✅ {refund:.0f}% physiological reserve restored for clean management")
                     # Transition back to stock
                     self.mode = "stock"
         else:
+            self._complication_wrong_attempts += 1
             self.vitals_engine.apply_intervention(eval_["vitalsEffect"], 1, self._tick)
             if eval_["complicationTriggered"] and not self.active_complication:
                 self.active_complication = eval_["complicationTriggered"]
+                self._complication_wrong_attempts = 0
                 self.vitals_engine.apply_complication(eval_["complicationTriggered"], 0.7)
                 self.events.append(f"Wrong decision triggered: {eval_['complicationTriggered'].replace('_', ' ')}")
                 self.complication_history.append({
@@ -1233,6 +1266,9 @@ class SimulationOrchestrator:
                     "resolvedTick": None,
                 })
             self.events.append(eval_["feedback"])
+
+        # Fix 3: cap any compensatory systolic spike before it reaches the client.
+        self.vitals_engine.cap_compensatory_bp()
 
         result = {
             "decisionId": decision_id,
