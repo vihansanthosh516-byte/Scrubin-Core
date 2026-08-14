@@ -788,6 +788,12 @@ class SimulationOrchestrator:
         self.complication_history: list[dict] = []
         # Human-readable death cause, set by check_mortality().
         self.death_reason: Optional[str] = None
+        # The /complete endpoint normalizes mode to "stock" before the debrief
+        # payload is built, so mode alone cannot tell the evaluator that the
+        # patient died. This flag preserves the true terminal state so the
+        # death caps (efficiency <= 40, competency <= 45, safety = 12) still
+        # apply to the final debrief.
+        self._evaluation_was_deceased = False
 
         # Unique per-session physiology (ASA class + presentation) rolled from
         # the seed, applied to starting AND homeostatic vitals.
@@ -1388,7 +1394,7 @@ class SimulationOrchestrator:
         spontaneous_comps = sum(1 for c in comps if c["source"] == "spontaneous")
         total_comps = len(comps)
 
-        is_deceased = self.mode == "deceased"
+        is_deceased = self.mode == "deceased" or self._evaluation_was_deceased
 
         def clamp(n: float, lo: float = 0.0, hi: float = 100.0) -> int:
             return max(int(lo), min(int(hi), round(n)))
@@ -1653,6 +1659,22 @@ class SimulationSession:
     def submit_decision(self, decision_id: str, option_id: str) -> dict:
         self.touch()
         return self.orchestrator.submit_decision(decision_id, option_id)
+
+    def finish_with_evaluation(self, *, deceased: bool) -> dict:
+        """Force the case to completion and return the final state with the
+        debrief evaluation built from the true terminal state.
+
+        The /complete endpoint normalizes mode to "stock" before serializing
+        (so the UI shows a neutral completed screen), but the evaluation must
+        still reflect a death when one occurred. `deceased` is captured from
+        the orchestrator BEFORE that normalization."""
+        self.touch()
+        orch = self.orchestrator
+        orch.completed = True
+        if deceased:
+            orch._evaluation_was_deceased = True
+        orch.mode = "stock"
+        return orch.get_state()
 
     @property
     def state(self) -> dict:

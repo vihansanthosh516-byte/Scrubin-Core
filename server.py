@@ -337,9 +337,12 @@ def complete_session(req: NextRequest):
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     try:
-        session.orchestrator.completed = True
-        session.orchestrator.mode = "stock"
-        state = session.state
+        # Capture the true terminal state BEFORE normalization: the debrief
+        # evaluation must know the patient died (death caps on efficiency /
+        # competency / safety), but the completed payload is sent with a
+        # neutral stock mode so the UI shows a finished screen.
+        deceased = session.orchestrator.mode == "deceased"
+        state = session.finish_with_evaluation(deceased=deceased)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     pending = _sanitize_decision(state["pendingDecision"]) if state["pendingDecision"] else None
