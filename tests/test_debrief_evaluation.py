@@ -251,4 +251,110 @@ def test_api_death_returns_evaluation(api_client):
             break
     assert ev is not None, "patient never died under neglect"
     assert ev["patient_outcome"] == "Deceased"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /complete honors a death (regression: mode was normalized to "stock"
+# before the evaluation was built, so the death caps never applied — dead
+# patients got efficiency 100 and inflated finals)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_api_complete_applies_death_caps_when_session_died(api_client):
+    """A session that dies must still be debriefed as a death by /complete.
+
+    Regression for the bug where /complete forced mode="stock" before
+    building the evaluation: build_evaluation()'s is_deceased check never
+    fired, so dead patients were reported as "Stabilized / Transferred"
+    with efficiency 100. Death caps: safety == 12, efficiency <= 40,
+    competency <= 45, final < 40."""
+    proc = next(p for p in ALL_PROCEDURES if p["id"] == "exploratory-laparotomy")
+    comp = proc["allowedComplications"][0]
+    r = api_client.post("/start", json={"procedure": "exploratory-laparotomy", "seed": 7})
+    assert r.status_code == 200
+    sid = r.json()["session_id"]
+    r = api_client.post("/next", json={"session_id": sid, "step_index": 0, "step_correct": True, "step_label": "Step 1"})
+    assert r.status_code == 200
+    r = api_client.post("/complicate", json={"session_id": sid, "complication": comp, "step_index": 1, "step_label": "Step 2"})
+    assert r.status_code == 200
+
+    # Neglect the complication until the patient dies (same driver as
+    # test_api_death_returns_evaluation).
+    died = False
+    for _ in range(300):
+        r = api_client.post("/tick", json={"session_id": sid})
+        assert r.status_code == 200
+        if r.json()["completed"]:
+            died = True
+            break
+    assert died, "patient never died under neglect"
+
+    # The regression: /complete must still apply the death caps.
+    r = api_client.post("/complete", json={"session_id": sid})
+    assert r.status_code == 200
+    data = r.json()
+    assert data["completed"] is True
+    ev = data["evaluation"]
+    assert ev is not None and ev["generated_by"] == "scrubin-core"
+    assert ev["patient_outcome"] == "Deceased", ev["patient_outcome"]
+    assert ev["safety_score"] == 12, ev
+    assert ev["efficiency_score"] <= 40, ev
+    assert ev["competency_score"] <= 45, ev
+    assert ev["final_score"] < 40, ev
+    assert any(c["severity"] == "FATAL" for c in ev["critical_events"])
+
+
+def test_api_complete_does_not_cap_a_survivor(api_client):
+    """The death caps must not leak into non-death debriefs (guard against
+    an over-broad fix). A clean completed case keeps normal scores."""
+    r = api_client.post("/start", json={"procedure": "appendectomy", "seed": 7})
+    assert r.status_code == 200
+    sid = r.json()["session_id"]
+    for i in range(3):
+        r = api_client.post(
+            "/next",
+            json={"session_id": sid, "step_index": i, "step_correct": True, "step_label": f"Step {i + 1}"},
+        )
+        assert r.status_code == 200
+    r = api_client.post("/complete", json={"session_id": sid})
+    assert r.status_code == 200
+    ev = r.json()["evaluation"]
+    assert ev is not None
+    assert ev["patient_outcome"] != "Deceased"
+    assert ev["efficiency_score"] > 40, ev
+    assert ev["safety_score"] > 12, ev
+
+
+def test_complete_session_normalization_contract():
+    """Session-level contract: finish_with_evaluation captures the terminal
+    state before normalizing mode, so the evaluation sees the death even
+    though the returned payload carries a neutral stock mode."""
+    from scrubin_core_engine import SimulationSession, SessionManager
+
+    manager = SessionManager()
+    session = manager.create("unit-death", 7, "exploratory-laparotomy")
+    orch = session.orchestrator
+    # Deterministic death: the orchestrator is in deceased mode already.
+    orch.mode = "deceased"
+    orch.completed = True
+    orch.death_reason = "Test death"
+
+    state = session.finish_with_evaluation(deceased=True)
+    # The payload is normalized for the UI...
+    assert state["mode"] == "stock"
+    assert state["completed"] is True
+    # ...but the evaluation reflects the death.
+    ev = state["evaluation"]
+    assert ev is not None
+    assert ev["patient_outcome"] == "Deceased"
+    assert ev["safety_score"] == 12
+    assert ev["efficiency_score"] <= 40
+    assert ev["competency_score"] <= 45
+
+    # And a fresh call with deceased=False must not cap.
+    session2 = manager.create("unit-survivor", 7, "appendectomy")
+    state2 = session2.finish_with_evaluation(deceased=False)
+    ev2 = state2["evaluation"]
+    assert ev2["patient_outcome"] != "Deceased"
+    assert ev2["efficiency_score"] > 40
+    assert ev2["safety_score"] > 12
     assert any(c["severity"] == "FATAL" for c in ev["critical_events"])
