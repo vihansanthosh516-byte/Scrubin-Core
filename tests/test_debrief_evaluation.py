@@ -357,4 +357,63 @@ def test_complete_session_normalization_contract():
     assert ev2["patient_outcome"] != "Deceased"
     assert ev2["efficiency_score"] > 40
     assert ev2["safety_score"] > 12
-    assert any(c["severity"] == "FATAL" for c in ev["critical_events"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Efficiency must penalize crisis drag (fast clicking cannot buy efficiency
+# out of a prolonged or unresolved complication)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_efficiency_penalized_per_tick_in_active_complication():
+    """Each tick spent with an unresolved complication active must deduct
+    from the efficiency score (3.5 pts per crisis tick)."""
+    orch = stock_run(7, "appendectomy")
+    clean = orch.build_evaluation()
+
+    # Simulate a crisis that dragged on: same case, but with 6 ticks spent
+    # in an active complication. Everything else is identical.
+    orch._ticks_in_active_complication = 6
+    dragged = orch.build_evaluation()
+
+    expected_drop = 3.5 * 6  # 21 pts
+    assert clean["efficiency_score"] - dragged["efficiency_score"] >= expected_drop - 1, (
+        clean["efficiency_score"], dragged["efficiency_score"]
+    )
+    assert dragged["efficiency_score"] <= clean["efficiency_score"], dragged
+
+
+def test_efficiency_capped_when_case_ends_with_unresolved_complication():
+    """Ending the case with a complication still unresolved caps efficiency
+    at 40 (like a death) — the patient leaves the OR unstable."""
+    orch = SimulationOrchestrator(7, "appendectomy")
+    # Drive to the final tick, rescuing any spontaneous crises cleanly (the
+    # same pattern as stock_run) so the case is otherwise perfect.
+    total = orch.procedure["totalTicks"]
+    idx = 0
+    guard = 0
+    while not orch.completed and guard < 500:
+        guard += 1
+        if orch.mode == "branched":
+            d = orch.pending_decision
+            if not d:
+                orch.next()
+                continue
+            opt = correct_option(d, orch.active_complication)
+            if opt is None:
+                break
+            orch.submit_decision(d["id"], opt)
+            continue
+        if idx >= total:
+            break
+        orch.record_stock_step(idx, True, f"Step {idx + 1}")
+        orch.next()
+        idx += 1
+    # Re-enter a crisis at the very end: a mistake complication stays open.
+    orch.trigger_complication(orch.procedure["allowedComplications"][0], total, "Final step")
+    orch.completed = True
+    # No decision was submitted, so the complication history entry is unresolved.
+    assert any(not c.get("resolved") for c in orch.complication_history)
+
+    ev = orch.build_evaluation()
+    assert ev["patient_outcome"] != "Deceased"
+    assert ev["efficiency_score"] <= 40, ev

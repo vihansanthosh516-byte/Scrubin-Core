@@ -794,6 +794,10 @@ class SimulationOrchestrator:
         # death caps (efficiency <= 40, competency <= 45, safety = 12) still
         # apply to the final debrief.
         self._evaluation_was_deceased = False
+        # Ticks spent with an unresolved complication active. Dragging out a
+        # crisis (or ending the case without resolving it) must cost efficiency
+        # — speed is not efficient when the patient is actively deteriorating.
+        self._ticks_in_active_complication = 0
 
         # Unique per-session physiology (ASA class + presentation) rolled from
         # the seed, applied to starting AND homeostatic vitals.
@@ -998,6 +1002,8 @@ class SimulationOrchestrator:
         vitals_before = self.vitals_engine.snapshot()
 
         if self.mode == "branched":
+            if self.active_complication:
+                self._ticks_in_active_complication += 1
             self.decay_vitals()
             # An untended patient keeps declining even while a complication is active.
             self.vitals_engine.apply_deterioration(0.15)
@@ -1186,6 +1192,8 @@ class SimulationOrchestrator:
             self.vitals_engine.apply_deterioration(0.05)
             self.vitals_engine.tick(self._tick)
         elif self.mode == "branched":
+            if self.active_complication:
+                self._ticks_in_active_complication += 1
             # Decay vitals based on active complication
             self.decay_vitals()
             # Check mortality
@@ -1229,6 +1237,8 @@ class SimulationOrchestrator:
                     self.complication_source = None
                     self.complication_cause = None
                     self.last_resolved_tick = self._tick
+                    # The crisis is over — stop counting inefficiency ticks.
+                    self._ticks_in_active_complication = 0
                     # Post-resolution recovery window: pull the deranged vitals
                     # back toward baseline over the next few ticks so a correct
                     # rescue is followed by visible normalization rather than a
@@ -1435,13 +1445,22 @@ class SimulationOrchestrator:
             safety = 12
         safety = clamp(safety)
 
-        # ── Efficiency: case length vs the authored plan ──
+        # ── Efficiency: case length vs the authored plan, minus crisis drag ──
         authored = max(1, int(self.procedure["totalTicks"]))
         efficiency = clamp(100.0 * authored / max(1.0, float(self._tick)))
+        # Every tick spent with an unresolved complication is inefficiency: the
+        # patient was deteriorating while the case dragged on. 3.5 pts per
+        # crisis tick, so fast clicking can no longer buy a perfect efficiency
+        # score out of a neglected or prolonged crisis.
+        efficiency = clamp(efficiency - 3.5 * self._ticks_in_active_complication)
         # A death is never efficient — the case ended in failure, not on time.
         if is_deceased:
             efficiency = min(efficiency, 40)
             competency = min(competency, 45)
+        # Ending the case with a complication still unresolved is not efficient
+        # either — the patient leaves the OR unstable. Cap it like a death.
+        if unresolved > 0 and not is_deceased:
+            efficiency = min(efficiency, 40)
 
         final_score = clamp(0.4 * safety + 0.4 * competency + 0.2 * efficiency)
 
