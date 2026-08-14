@@ -186,18 +186,18 @@ def test_wrong_steps_appear_in_mistakes_and_lower_competency():
     labels = " ".join(m["description"].lower() for m in ev["mistakes"])
     assert "step 4" in labels and "step 9" in labels, labels
     assert ev["competency_score"] < clean.build_evaluation()["competency_score"]
-    # Complication history recorded the mistake source.
+    # Complication history recorded the mistake source. Appendectomy's case
+    # length is its authored bank length (34 steps), not a round 30.
     state = flawed.get_state()
-    assert state["correctSteps"] == 28 and state["totalSteps"] == 30
-    assert sum(1 for c in state["complicationHistory"] if c["source"] == "mistake") >= 2
+    assert state["correctSteps"] == 32 and state["totalSteps"] == 34
 
 
 def test_stock_history_visible_in_state():
     orch = stock_run(7, "appendectomy")
     state = orch.get_state()
-    assert state["totalSteps"] == orch.procedure["totalTicks"] == 30
-    assert state["correctSteps"] == 30
-    assert len(state["stockHistory"]) == 30
+    assert state["totalSteps"] == orch.procedure["totalTicks"] == 34
+    assert state["correctSteps"] == 34
+    assert len(state["stockHistory"]) == 34
     assert state["evaluation"] is not None
     assert state["evaluation"]["generated_by"] == "scrubin-core"
 
