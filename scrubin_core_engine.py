@@ -117,6 +117,19 @@ class VitalsEngine:
         self.baseline_vitals = dict(baseline_vitals) if baseline_vitals else dict(DEFAULT_VITALS)
         self.pending_effects: list[dict] = []  # [{ tick, effect: {key:val} }]
         self.deterioration = 0.0  # cumulative physiologic decline for telemetry
+        # Post-resolution recovery window: while tick <= recovery_until, vitals
+        # pull back toward baseline much faster and decline is suppressed, so a
+        # correctly managed complication visibly normalizes the patient instead
+        # of leaving them critical until the case ends.
+        self.recovery_until = -1
+
+    def begin_recovery_window(self, until_tick: int) -> None:
+        """Open a post-resolution window where vitals recover toward baseline
+        aggressively. Call once on a correct complication resolution."""
+        self.recovery_until = max(self.recovery_until, until_tick)
+
+    def in_recovery_window(self, tick: int) -> bool:
+        return tick <= self.recovery_until
 
     def _deterioration_stress(self) -> float:
         """How physiologically compromised the patient currently is (>= 1.0).
@@ -171,13 +184,16 @@ class VitalsEngine:
 
     def tick(self, tick: int) -> dict:
         recovery = self.risk_profile["recovery_speed"]
+        # During the post-resolution recovery window, pull back toward baseline
+        # ~4x faster so a correct rescue is followed by visible normalization.
+        pull = 0.08 if self.in_recovery_window(tick) else 0.02
         for key, target in self.baseline_vitals.items():
             current = self.vitals[key]
             # Physiologic noise is kept quiet so the deterioration trend (not
             # random walk) drives the clinical course — complications then
             # develop causally from the vitals, not from noise.
             drift = self.rng.next_float(-0.15, 0.15)
-            self.vitals[key] += (target - current) * 0.02 * recovery + drift
+            self.vitals[key] += (target - current) * pull * recovery + drift
         due = [e for e in self.pending_effects if e["tick"] <= tick]
         for entry in due:
             for key, val in entry["effect"].items():
@@ -940,8 +956,11 @@ class SimulationOrchestrator:
             vitals_before = self.vitals_engine.snapshot()
             # Progressive deterioration: the patient's physiology declines as the
             # case advances. Complications are CAUSAL — they develop when a
-            # vital crosses its scientific threshold and stays there.
-            self.vitals_engine.apply_deterioration()
+            # vital crosses its scientific threshold and stays there. After a
+            # correct resolution the recovery window is open, so decline is
+            # paused while the patient visibly stabilizes.
+            if not self.vitals_engine.in_recovery_window(self._tick):
+                self.vitals_engine.apply_deterioration()
             vitals_after = self.vitals_engine.tick(self._tick)
             cooldown_ok = self._tick - self.last_resolved_tick >= POST_RESOLUTION_STABILIZATION_TICKS
             trigger = self.comp_engine.detect(self._tick, vitals_after) if cooldown_ok else None
@@ -1183,6 +1202,11 @@ class SimulationOrchestrator:
                     self.complication_source = None
                     self.complication_cause = None
                     self.last_resolved_tick = self._tick
+                    # Post-resolution recovery window: pull the deranged vitals
+                    # back toward baseline over the next few ticks so a correct
+                    # rescue is followed by visible normalization rather than a
+                    # patient who stays critical to the end of the case.
+                    self.vitals_engine.begin_recovery_window(self._tick + POST_RESOLUTION_STABILIZATION_TICKS)
                     # Mark the currently-active complication as resolved in the
                     # durable history the debrief evaluation reads.
                     for entry in reversed(self.complication_history):
