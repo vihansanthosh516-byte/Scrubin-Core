@@ -31,7 +31,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from scrubin_core_engine import (
     SessionManager,
@@ -134,6 +134,9 @@ class EvaluateRequest(BaseModel):
 class ComplicateRequest(BaseModel):
     session_id: str
     complication: str
+    # Optional Groq explanation. The Python engine never uses this for
+    # physiology; it is echoed as a timeline event for the client.
+    narrative: Optional[str] = Field(default=None, max_length=2000)
     # The stock step the trainee failed, which triggered this complication.
     step_index: Optional[int] = None
     step_label: Optional[str] = None
@@ -275,6 +278,12 @@ def complicate(req: ComplicateRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     pending = _sanitize_decision(result["pendingDecision"]) if result["pendingDecision"] else None
+    narrative = req.narrative.strip() if req.narrative else None
+    if narrative == "":
+        narrative = None
+    events = list(result.get("events", []))
+    if narrative:
+        events.append(f"🧠 Attending Note: {narrative}")
     state = session.state
     return {
         "tick": result["tick"],
@@ -283,7 +292,8 @@ def complicate(req: ComplicateRequest):
         "procedure_phase": result["procedurePhase"],
         "active_complication": result["activeComplication"],
         "pending_decision": pending,
-        "events": result["events"],
+        "events": events,
+        "narrative": narrative,
         "score": result["score"],
         "completed": state["completed"],
         "mode": state["mode"],

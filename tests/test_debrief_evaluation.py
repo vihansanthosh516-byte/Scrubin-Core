@@ -232,6 +232,51 @@ def test_api_complete_returns_evaluation(api_client):
     assert data["total_steps"] == 3 and data["correct_steps"] == 3
 
 
+def test_api_complicate_echoes_narrative_without_changing_physiology(api_client):
+    """Groq's narrative is transport-only: it appears in the response event
+    stream while the deterministic complication math remains unchanged."""
+    proc = next(p for p in ALL_PROCEDURES if p["id"] == "appendectomy")
+    comp = proc["allowedComplications"][0]
+    payload = {"procedure": "appendectomy", "seed": 913}
+
+    noted_start = api_client.post("/start", json=payload)
+    plain_start = api_client.post("/start", json=payload)
+    assert noted_start.status_code == 200
+    assert plain_start.status_code == 200
+
+    note = "The missed time-out breaks identity and sterility safeguards."
+    noted = api_client.post(
+        "/complicate",
+        json={
+            "session_id": noted_start.json()["session_id"],
+            "complication": comp,
+            "step_index": 0,
+            "step_label": "Patient identification",
+            "narrative": note,
+        },
+    )
+    plain = api_client.post(
+        "/complicate",
+        json={
+            "session_id": plain_start.json()["session_id"],
+            "complication": comp,
+            "step_index": 0,
+            "step_label": "Patient identification",
+        },
+    )
+    assert noted.status_code == 200
+    assert plain.status_code == 200
+
+    noted_data = noted.json()
+    plain_data = plain.json()
+    assert noted_data["narrative"] == note
+    assert f"🧠 Attending Note: {note}" in noted_data["events"]
+    assert plain_data["narrative"] is None
+    assert noted_data["vitals"] == plain_data["vitals"]
+    assert noted_data["physiological_reserve"] == plain_data["physiological_reserve"] == 75.0
+    assert noted_data["active_complication"] == plain_data["active_complication"] == comp
+
+
 def test_api_death_returns_evaluation(api_client):
     proc = next(p for p in ALL_PROCEDURES if p["id"] == "exploratory-laparotomy")
     comp = proc["allowedComplications"][0]
