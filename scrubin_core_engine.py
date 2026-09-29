@@ -1491,12 +1491,18 @@ class SimulationOrchestrator:
         def _step_label(s: dict) -> str:
             return s.get("label") or f"Step {int(s.get('index', 0)) + 1}"
 
+        def _wrong_step(s: dict) -> str:
+            # Quote the pick like a wrong rescue decision when the client sent it.
+            text = f"{_step_label(s)}: {s['chosen']}" if s.get("chosen") else _step_label(s)
+            return f"{text} — {s['why']}" if s.get("why") else text
+
         # ── Timeline (merged, sorted by tick, capped) ──
         timeline: list[dict] = []
         for s in stock:
             timeline.append({
                 "tick": s.get("tick"),
-                "description": f"{'✅ Completed' if s['correct'] else '❌ Missed'} surgical step — {_step_label(s)}",
+                "description": f"✅ Completed surgical step — {_step_label(s)}" if s["correct"]
+                else f"❌ Wrong surgical step — {_wrong_step(s)}",
             })
         for c in comps:
             timeline.append({
@@ -1543,11 +1549,12 @@ class SimulationOrchestrator:
             if not s["correct"]:
                 mistakes.append({
                     "tick": s.get("tick"),
-                    "description": f"Missed surgical step: {_step_label(s)}",
+                    "description": f"Wrong surgical step — {_wrong_step(s)}",
                 })
         for d in decisions:
             if not d["wasCorrect"]:
-                mistakes.append({"tick": d.get("tick"), "description": d["feedback"]})
+                mistakes.append({"tick": d.get("tick"), "description": f"Wrong decision — {d['feedback']}"})
+        mistakes.sort(key=lambda m: m.get("tick") or 0)
         mistakes = mistakes[-15:]
 
         # ── Strengths ──

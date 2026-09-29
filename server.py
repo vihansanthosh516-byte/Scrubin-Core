@@ -146,6 +146,9 @@ class ComplicateRequest(BaseModel):
     step_index: Optional[int] = None
     step_label: Optional[str] = None
     step_kind: Optional[str] = None
+    # What the trainee picked on that step, and why it was wrong, for the debrief.
+    chosen_action: Optional[str] = None
+    choice_feedback: Optional[str] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,6 +290,10 @@ def complicate(req: ComplicateRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     try:
         result = session.trigger_complication(req.complication, req.step_index, req.step_label, req.step_kind)
+        stock = session.orchestrator.stock_history
+        if req.step_index is not None and stock and not stock[-1]["correct"]:
+            stock[-1]["chosen"] = req.chosen_action
+            stock[-1]["why"] = req.choice_feedback
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     pending = _sanitize_decision(result["pendingDecision"]) if result["pendingDecision"] else None
