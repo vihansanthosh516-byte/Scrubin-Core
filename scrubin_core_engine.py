@@ -1486,7 +1486,10 @@ class SimulationOrchestrator:
                 abs(v.get(k, base.get(k, 0)) - base.get(k, 0)) > t
                 for k, t in tol.items()
             )
-            outcome = "Stabilized / Transferred" if deranged else "Stable / Discharged"
+            # Drift alone on a clean case is not a complication: only call it
+            # complicated when something actually went wrong.
+            clean = self.complication_count == 0 and all(x["correct"] for x in stock) and all(d["wasCorrect"] for d in decisions)
+            outcome = "Stabilized / Transferred" if deranged and not clean else "Stable / Discharged"
 
         def _step_label(s: dict) -> str:
             return s.get("label") or f"Step {int(s.get('index', 0)) + 1}"
