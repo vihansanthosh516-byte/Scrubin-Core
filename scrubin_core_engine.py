@@ -588,6 +588,12 @@ class DecisionEngine:
 # the soonest a spontaneous re-fire can occur is tick 10 (8 + persistence 2).
 POST_RESOLUTION_STABILIZATION_TICKS = 8
 
+# Complications that drive circulatory collapse. With reserve nearly gone, even a
+# correct answer to one of these cannot pull the patient back. A correct answer
+# to anything else (nerve injury, infection, thrombosis, fluid overload) treats it:
+# those do not cause intraoperative death on their own.
+SHOCK_COMPLICATIONS = {"hemorrhage", "anaphylaxis", "cardiac_arrhythmia", "hypoxia"}
+
 COMPLICATION_TRIGGERS = {
     "hypoxia":            {"criteria": [("spo2", "<", 93.0)], "persistence": 2},
     "hemorrhage":         {"criteria": [("bp_systolic", "<", 88.0)], "persistence": 2},
@@ -1221,7 +1227,7 @@ class SimulationOrchestrator:
             self.vitals_engine.apply_intervention(eval_["vitalsEffect"], 3, self._tick)
             self.events.append(eval_["feedback"])
             if self.active_complication:
-                if self.physiological_reserve < 30.0:
+                if self.physiological_reserve < 30.0 and self.active_complication in SHOCK_COMPLICATIONS:
                     # Fix 2: no infinite phantom loop. Reserve below 30% with an
                     # active complication is the point of no return — the engine
                     # hard-transitions to terminal failure instead of rewarding
