@@ -1296,11 +1296,12 @@ class SimulationOrchestrator:
                     self.vitals_engine.begin_recovery_window(self._tick + POST_RESOLUTION_STABILIZATION_TICKS)
                     # Mark the currently-active complication as resolved in the
                     # durable history the debrief evaluation reads.
-                    for entry in reversed(self.complication_history):
+                    # A complication that fired on top of another replaced it
+                    # as the active crisis; this rescue ends both.
+                    for entry in self.complication_history:
                         if not entry.get("resolved"):
                             entry["resolved"] = True
                             entry["resolvedTick"] = self._tick
-                            break
                     self.events.append("Complication resolved")
                     # Fix 1: renewable reserve — reward clean management. Refund
                     # up to 15% reserve for a first-try rescue, minus 5% per
@@ -1602,9 +1603,13 @@ class SimulationOrchestrator:
 
         # ── Strengths ──
         strengths: list[dict] = []
+        # The client finishes the case without reporting its last step, so a
+        # completed case counts at least the procedure's full length.
+        stock_wrong = stock_total - stock_correct
+        shown_total = max(stock_total, int(self.procedure["totalTicks"])) if (self.completed and not is_deceased) else stock_total
         if stock_total:
             strengths.append({
-                "description": f"Completed {stock_correct} of {stock_total} surgical steps correctly on first attempt",
+                "description": f"Completed {shown_total - stock_wrong} of {shown_total} surgical steps correctly on first attempt",
             })
         if dec_total:
             strengths.append({

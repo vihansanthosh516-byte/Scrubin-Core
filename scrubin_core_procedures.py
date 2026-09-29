@@ -92,8 +92,11 @@ ARCHETYPE_COMPLICATION_MAP: Dict[str, List[str]] = {
     "BLEEDING_CONTROL":     ["hemorrhage"],
     "INFECTION_MANAGEMENT": ["infection"],
     "PAIN_MANAGEMENT":      ["nerve_injury"],
-    "DIAGNOSTIC_STEP":      ["infection", "thrombosis", "nerve_injury"],
-    "SURGICAL_DECISION":    ["hemorrhage", "nerve_injury", "thrombosis"],
+    # A crisis only draws an option set whose treating options a surgeon would
+    # recognize as treatment: bleeding gets volume and source control, never a
+    # set where "proceed" or "abort" is the only answer.
+    "DIAGNOSTIC_STEP":      ["thrombosis", "nerve_injury"],
+    "SURGICAL_DECISION":    ["nerve_injury"],
     "POST_OP_MONITORING":   ["infection", "thrombosis", "fluid_overload"],
 }
 
@@ -449,7 +452,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "proceed",
             "label": "Proceed with planned approach",
-            "treats": ["hemorrhage", "nerve_injury"],
+            "treats": [],
             "vitalsEffect": {"heart_rate": +3},
             "riskIfWrong": {"heart_rate": +8, "bp_systolic": -5},
             "correctFeedback": "Planned approach is appropriate. Proceeding safely.",
