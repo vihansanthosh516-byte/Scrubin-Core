@@ -236,6 +236,11 @@ class ComplicationEngine:
         # derangement (e.g. low BP after thrombosis) re-fires a different
         # complication 3 ticks after a correct recovery.
         self.awaiting_recovery: bool = False
+        # Observations spent still deranged after a correct rescue. If the vital
+        # never recovers, the block above would leave SpO2 at 86% with no active
+        # complication for the rest of the case; past this many it is treated as
+        # a recurrence and detection re-arms.
+        self.stuck_after_rescue: int = 0
 
     def _normalize_weights(self, w: dict) -> dict:
         filtered: dict = {}
@@ -298,8 +303,12 @@ class ComplicationEngine:
                 if comp in COMPLICATION_TRIGGERS
             )
             if still_deranged:
-                return None
+                self.stuck_after_rescue += 1
+                if self.stuck_after_rescue < RECURRENCE_AFTER_TICKS:
+                    return None
+                self.disqualified.clear()
             self.awaiting_recovery = False
+            self.stuck_after_rescue = 0
         # Re-arm resolved complications once their trigger derangement clears —
         # only a NEW episode (vital recovered, then crossed again) can re-fire.
         for comp in list(self.disqualified):
@@ -587,6 +596,21 @@ class DecisionEngine:
 # flake that failed the live "no re-trigger" test in CI. With an 8-tick gate
 # the soonest a spontaneous re-fire can occur is tick 10 (8 + persistence 2).
 POST_RESOLUTION_STABILIZATION_TICKS = 8
+# What the attending says after a first wrong rescue pick, so the right kind of
+# treatment is findable without giving away the option.
+RESCUE_HINTS = {
+    "hemorrhage": "Bleeding needs source control and volume, not observation.",
+    "hypoxia": "Secure oxygenation first: think airway and oxygen before anything else.",
+    "cardiac_arrhythmia": "An unstable rhythm is treated electrically, not by waiting.",
+    "anaphylaxis": "This is anaphylaxis: the first-line drug has to go in now.",
+    "infection": "Sepsis needs cultures, antibiotics, and control of the source.",
+    "thrombosis": "Confirm the clot and restore flow; supportive care alone will not do it.",
+    "fluid_overload": "He is overloaded: take fluid off, do not add more.",
+    "nerve_injury": "The nerve needs to be assessed directly, surgically or with imaging, and the pain treated.",
+}
+
+# A derangement that outlasts a rescue by this many observations is a recurrence.
+RECURRENCE_AFTER_TICKS = 12
 
 # Complications that drive circulatory collapse. With reserve nearly gone, even a
 # correct answer to one of these cannot pull the patient back. A correct answer
@@ -1292,6 +1316,9 @@ class SimulationOrchestrator:
                     self.mode = "stock"
         else:
             self._complication_wrong_attempts += 1
+            hint = RESCUE_HINTS.get(self.active_complication or "")
+            if hint and self._complication_wrong_attempts == 1:
+                self.events.append(f"🧠 Attending: {hint}")
             self.vitals_engine.apply_intervention(eval_["vitalsEffect"], 1, self._tick)
             if eval_["complicationTriggered"] and not self.active_complication:
                 self.active_complication = eval_["complicationTriggered"]
