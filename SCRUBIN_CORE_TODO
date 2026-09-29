@@ -1,0 +1,211 @@
+# SCRUBIN_CORE_TODO.md
+
+# ScrubIn Core Master Roadmap
+
+## Goal
+
+ScrubIn Core is the **entire deterministic engine**.
+
+It owns:
+
+* Simulation
+* Physiology
+* Executive Planner
+* Learning
+* Evaluation
+* Replay
+* Stabilization
+* Orchestration
+* API
+* Persistence
+
+It should NEVER contain UI code.
+
+---
+
+# PHASE 1 — SECURITY
+
+* [ ] Rotate secrets
+* [ ] Secure Supabase
+* [ ] RLS audit
+* [ ] Helmet
+* [ ] CSP
+* [ ] CORS
+* [ ] CSRF
+* [ ] Rate limiting
+* [ ] Audit logging
+
+---
+
+# PHASE 2 — API CONTRACT
+
+Freeze public API.
+
+Create:
+
+* [ ] POST /simulation/start
+* [ ] POST /simulation/{id}/decision
+* [ ] GET /simulation/{id}/state
+* [ ] GET /simulation/{id}/timeline
+* [ ] GET /simulation/{id}/evaluation
+* [ ] GET /simulation/{id}/replay
+* [ ] POST /simulation/save
+* [ ] GET /simulation/load
+* [ ] GET /procedure/{id}
+* [ ] GET /search
+* [ ] GET /leaderboard
+* [ ] GET /learn
+* [ ] GET /user/profile
+* [ ] GET /user/history
+
+Freeze schemas.
+
+---
+
+# PHASE 3 — PROCEDURE ENGINE
+
+* [ ] Complete all procedures
+* [ ] Canonical timelines
+* [ ] Canonical phases
+* [ ] Decision trees
+* [ ] Failure conditions
+* [ ] Success conditions
+
+---
+
+# PHASE 4 — EXECUTIVE PLANNER
+
+* [ ] Goal generation
+* [ ] Goal arbitration
+* [ ] Recovery planning
+* [ ] Adaptive planning
+* [ ] Workflow management
+
+---
+
+# PHASE 5 — PHYSIOLOGY
+
+* [ ] Vitals
+* [ ] Bleeding
+* [ ] Oxygenation
+* [ ] Hemodynamics
+* [ ] Drug effects
+* [ ] Fluids
+* [ ] Temperature
+
+---
+
+# PHASE 6 — DECISION ENGINE
+
+* [ ] Surgical actions
+* [ ] Team actions
+* [ ] Instrument validation
+* [ ] Context awareness
+* [ ] Failure handling
+
+---
+
+# PHASE 7 — EVALUATION
+
+* [ ] Scoring
+* [ ] Errors
+* [ ] Critical events
+* [ ] Feedback
+* [ ] Competency mapping
+
+---
+
+# PHASE 8 — REPLAY
+
+* [ ] Timeline generation
+* [ ] Snapshot storage
+* [ ] Replay loading
+* [ ] Replay export
+
+---
+
+# PHASE 9 — LEARNING
+
+* [ ] Experience engine
+* [ ] Policy learning
+* [ ] Pattern extraction
+* [ ] Knowledge graph
+* [ ] Reflection
+* [ ] Meta learning
+
+---
+
+# PHASE 10 — STABILIZATION
+
+* [ ] Drift correction
+* [ ] Rollback
+* [ ] Hash verification
+* [ ] Replay verification
+* [ ] Convergence
+
+---
+
+# PHASE 11 — GLOBAL ORCHESTRATION
+
+* [ ] Aggregate all subsystems
+* [ ] Global snapshot
+* [ ] Cross-layer planning
+* [ ] Final deterministic hash
+
+---
+
+# PHASE 12 — DATABASE
+
+* [ ] Save simulations
+* [ ] Save replay
+* [ ] Save debrief
+* [ ] Save XP
+* [ ] Save badges
+* [ ] Save history
+
+---
+
+# PHASE 13 — AI
+
+* [ ] Case generation
+* [ ] AI feedback
+* [ ] AI differential
+* [ ] AI planning
+* [ ] AI explanation
+
+---
+
+# PHASE 14 — ENTERPRISE
+
+* [ ] Residency programs
+* [ ] Faculty dashboards
+* [ ] Competencies
+* [ ] Multi-tenant
+
+---
+
+# PHASE 15 — DEPLOYMENT
+
+* [ ] Cloudflare Workers
+* [ ] Supabase
+* [ ] CI/CD
+* [ ] Monitoring
+* [ ] Health endpoints
+* [ ] Backups
+
+---
+
+# FINAL RULE
+
+ScrubIn Core is the ONLY source of truth for:
+
+* Simulation
+* Physiology
+* Decisions
+* Evaluation
+* Replay
+* Learning
+* Cognition
+* Orchestration
+
+Frontend clients must never duplicate engine logic.

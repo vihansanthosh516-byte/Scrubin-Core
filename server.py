@@ -116,6 +116,11 @@ class DecideRequest(BaseModel):
     session_id: str
     decision_id: str
     option_id: str
+    # A client that re-skins the option (tailored rescue text) sends what the
+    # trainee actually read, so the debrief quotes that instead of Core's
+    # generic line for the underlying option.
+    label: Optional[str] = None
+    feedback: Optional[str] = None
 
 
 class ResetRequest(BaseModel):
@@ -219,6 +224,10 @@ def decide(req: DecideRequest):
         raise HTTPException(status_code=404, detail="Session not found")
     try:
         result = session.submit_decision(req.decision_id, req.option_id)
+        if req.label or req.feedback:
+            history = session.orchestrator.decision_history
+            if history:
+                history[-1]["feedback"] = " — ".join(x for x in (req.label, req.feedback) if x)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
     dr = result["decisionResult"]
