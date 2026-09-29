@@ -1126,7 +1126,7 @@ ALL_PROCEDURES: List[Dict[str, Any]] = [
             {"id": 7, "name": "Closure", "icon": "🪢", "short": "Close"},
             {"id": 8, "name": "ICU & Recovery", "icon": "🏥", "short": "ICU"},
         ],
-        "totalTicks": 35,
+        "totalTicks": 36,
     },
     {
         "id": "craniotomy",

@@ -625,18 +625,24 @@ def _format_complication_cause(comp: str, vitals: dict) -> str:
     def fell(value, thresh, unit, label, prec=0):
         if value < thresh:
             return f"{label} has fallen to {fmt_val(value, prec)}{unit} — below the {thresh:g}{unit} threshold"
+        if value > thresh * 1.2:
+            return f"{label} is still {fmt_val(value, prec)}{unit} but will fall as this progresses"
         return f"{label} is {fmt_val(value, prec)}{unit} and dropping toward the {thresh:g}{unit} threshold"
 
     def rose(value, thresh, unit, label, prec=0):
         if value > thresh:
             return f"{label} has climbed to {fmt_val(value, prec)}{unit} — above the {thresh:g}{unit} threshold"
+        if value < thresh * 0.8:
+            return f"{label} is {fmt_val(value, prec)}{unit} for now and will climb as this progresses"
         return f"{label} is {fmt_val(value, prec)}{unit} and climbing toward the {thresh:g}{unit} threshold"
 
     causes = {
         "hypoxia":            f"Oxygen delivery is failing — {fell(spo2, 93.0, '%', 'SpO₂')}",
-        "hemorrhage":         f"Hypovolemic shock is developing — {fell(bp, 88.0, ' mmHg', 'systolic BP')}",
+        "hemorrhage":         (f"Hypovolemic shock is developing — {fell(bp, 88.0, ' mmHg', 'systolic BP')}" if bp < 110
+                               else f"Active bleeding — {fell(bp, 88.0, ' mmHg', 'systolic BP')}"),
         "infection":          f"Systemic inflammation is spreading — {rose(temp, 38.3, '°C', 'temperature', 1)}",
-        "cardiac_arrhythmia": f"Unstable tachyarrhythmia — {rose(hr, 135.0, ' bpm', 'heart rate')}",
+        "cardiac_arrhythmia": (f"Unstable tachyarrhythmia — {rose(hr, 135.0, ' bpm', 'heart rate')}" if hr >= 110
+                               else f"New rhythm disturbance on the monitor — {rose(hr, 135.0, ' bpm', 'heart rate')}"),
         "thrombosis":         f"Possible thromboembolism — {rose(rr, 26.0, '/min', 'respiratory rate')}",
         "fluid_overload":     f"Volume overload — {fell(spo2, 93.0, '%', 'SpO₂')} with tachycardia (HR {hr:.0f} bpm)",
         "anaphylaxis":        f"Anaphylactic reaction — airway and perfusion compromised (BP {bp:.0f} mmHg, SpO₂ {spo2:.0f}%)",
@@ -702,6 +708,17 @@ STARTING_VITAL_GUARDRAILS = {
 
 ASA_MULTIPLIERS = {1: 0.8, 2: 1.0, 3: 1.3}          # presentation severity scaling
 ASA_DETERIORATION = {1: 0.9, 2: 1.0, 3: 1.18}       # sicker patients decline faster
+# The patients these operations are done on carry the disease behind them: a
+# CABG patient has coronary disease, a Whipple patient has pancreatic cancer.
+# Their ASA class cannot sit below this floor.
+MIN_ASA = {
+    "cabg": 3, "cabg-offpump": 3, "whipple": 3, "aaa-repair": 3, "craniotomy": 3,
+    "esophagectomy": 3, "hepatic-lobectomy": 3, "pulmonary-lobectomy": 3,
+    "sigmoid-colectomy": 2, "exploratory-laparotomy": 2, "radical-nephrectomy": 2,
+    "radical-prostatectomy": 2, "spinal-fusion": 2, "hip-replacement": 2,
+    "total-knee-replacement": 2, "femoral-nail-fixation": 2,
+}
+
 ASA_LABELS = {
     1: "ASA I (healthy)",
     2: "ASA II (mild systemic disease)",
@@ -839,6 +856,9 @@ class SimulationOrchestrator:
 
         asa_roll = rng.next_float(0.0, 1.0)
         asa = 1 if asa_roll < 0.30 else (2 if asa_roll < 0.70 else 3)
+        asa = max(asa, MIN_ASA.get(self.procedure.get("id", ""), 1))
+        if asa >= 3 and presentation == "fit":
+            presentation = "compensated"
 
         deltas = PATIENT_PRESENTATION_DELTAS[presentation]
         mult = ASA_MULTIPLIERS[asa]
@@ -1474,22 +1494,15 @@ class SimulationOrchestrator:
         if is_deceased:
             outcome = "Deceased"
         else:
-            tol = {
-                "spo2": 4.0,
-                "bp_systolic": 18.0,
-                "bp_diastolic": 12.0,
-                "heart_rate": 22.0,
-                "temperature": 0.8,
-                "respiratory_rate": 5.0,
-            }
-            deranged = any(
-                abs(v.get(k, base.get(k, 0)) - base.get(k, 0)) > t
-                for k, t in tol.items()
+            # One rule for every procedure: a wrong pick, a complication it caused,
+            # or one left unresolved makes the case complicated. A clean case (a
+            # spontaneous event handled correctly included) is a discharge.
+            clean = (
+                all(x["correct"] for x in stock)
+                and all(d["wasCorrect"] for d in decisions)
+                and all(c.get("resolved") and c.get("source") != "mistake" for c in self.complication_history)
             )
-            # Drift alone on a clean case is not a complication: only call it
-            # complicated when something actually went wrong.
-            clean = self.complication_count == 0 and all(x["correct"] for x in stock) and all(d["wasCorrect"] for d in decisions)
-            outcome = "Stabilized / Transferred" if deranged and not clean else "Stable / Discharged"
+            outcome = "Stable / Discharged" if clean else "Stabilized / Transferred"
 
         def _step_label(s: dict) -> str:
             return s.get("label") or f"Step {int(s.get('index', 0)) + 1}"
