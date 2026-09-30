@@ -550,7 +550,7 @@ class DecisionEngine:
 
         possible = ARCHETYPE_COMPLICATION_MAP[option["archetype"]]
         trigger = None
-        if not active_complication and self.rng.next() < 0.4:
+        if not active_complication and possible and self.rng.next() < 0.4:
             trigger = self.rng.pick(possible)
         return {
             "wasCorrect": False,
@@ -621,7 +621,7 @@ RESCUE_HINTS = {
     "infection": "Sepsis needs cultures, antibiotics, and control of the source.",
     "thrombosis": "Confirm the clot and restore flow; supportive care alone will not do it.",
     "fluid_overload": "He is overloaded: take fluid off, do not add more.",
-    "nerve_injury": "The nerve needs to be assessed directly, surgically or with imaging, and the pain treated.",
+    "nerve_injury": "Take the pressure off the nerve first: release the retraction or traction and reposition.",
 }
 
 # A derangement that outlasts a rescue by this many observations is a recurrence.

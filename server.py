@@ -368,6 +368,12 @@ def complete_session(req: NextRequest):
     session = manager.get(req.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
+    # The final step goes straight to /complete (no /next), so record it here
+    # or the debrief would end one step short.
+    if req.step_index is not None:
+        session.orchestrator.record_stock_step(
+            req.step_index, bool(req.step_correct), req.step_label
+        )
     try:
         # Capture the true terminal state BEFORE normalization: the debrief
         # evaluation must know the patient died (death caps on efficiency /

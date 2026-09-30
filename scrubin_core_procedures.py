@@ -91,11 +91,11 @@ ARCHETYPE_COMPLICATION_MAP: Dict[str, List[str]] = {
     "HEMODYNAMIC_CONTROL":  ["hemorrhage", "cardiac_arrhythmia", "fluid_overload", "anaphylaxis"],
     "BLEEDING_CONTROL":     ["hemorrhage"],
     "INFECTION_MANAGEMENT": ["infection"],
-    "PAIN_MANAGEMENT":      ["nerve_injury"],
+    "PAIN_MANAGEMENT":      [],
     # A crisis only draws an option set whose treating options a surgeon would
     # recognize as treatment: bleeding gets volume and source control, never a
     # set where "proceed" or "abort" is the only answer.
-    "DIAGNOSTIC_STEP":      ["nerve_injury"],
+    "DIAGNOSTIC_STEP":      [],
     "SURGICAL_DECISION":    ["nerve_injury"],
     "POST_OP_MONITORING":   ["thrombosis"],
 }
@@ -376,7 +376,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "iv_opioid",
             "label": "IV opioid analgesic",
-            "treats": ["nerve_injury"],
+            "treats": [],
             "vitalsEffect": {"heart_rate": -8, "bp_systolic": -3, "respiratory_rate": -2},
             "riskIfWrong": {"spo2": -3, "respiratory_rate": -4},
             "correctFeedback": "Pain controlled. Patient comfortable and vitals stabilizing.",
@@ -385,7 +385,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "regional_block",
             "label": "Regional nerve block",
-            "treats": ["nerve_injury"],
+            "treats": [],
             "vitalsEffect": {"heart_rate": -10, "bp_systolic": -5},
             "riskIfWrong": {"heart_rate": +5, "bp_systolic": -8},
             "correctFeedback": "Regional block effective. Pain well-controlled with minimal systemic effect.",
@@ -394,7 +394,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "nsaid",
             "label": "IV NSAID (ketorolac)",
-            "treats": ["nerve_injury"],
+            "treats": [],
             "vitalsEffect": {"heart_rate": -4, "temperature": -0.2},
             "riskIfWrong": {"bp_systolic": +5},
             "correctFeedback": "NSAID providing adjunct pain relief. Anti-inflammatory effect helpful.",
@@ -414,7 +414,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "imaging",
             "label": "Order imaging (CT/X-ray)",
-            "treats": ["nerve_injury"],
+            "treats": [],
             "vitalsEffect": {},
             "riskIfWrong": {"heart_rate": +3},
             "correctFeedback": "Imaging reveals the key finding. Diagnosis clarified.",
@@ -475,6 +475,15 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
             "riskIfWrong": {"heart_rate": +10, "bp_systolic": -5},
             "correctFeedback": "Correct call to abort. Patient safety prioritized over completing the case.",
             "wrongFeedback": "Aborting was premature. The case could have been completed safely.",
+        },
+        {
+            "id": "release_traction",
+            "label": "Release retraction, reposition, and check nerve monitoring",
+            "treats": ["nerve_injury"],
+            "vitalsEffect": {"heart_rate": -4},
+            "riskIfWrong": {"heart_rate": +3},
+            "correctFeedback": "Traction released and the limb repositioned — nerve signals recovering.",
+            "wrongFeedback": "Releasing retraction cost time without addressing the real problem.",
         },
         {
             "id": "request_assistance",
