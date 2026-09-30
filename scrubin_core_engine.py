@@ -351,6 +351,19 @@ class ComplicationEngine:
 # Decision engine
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Decoys that read as absurd for a complication (a surgical airway for
+# bleeding, IM anaphylaxis-dose epinephrine for an arrhythmia) teach nothing and
+# look like errors in the curriculum — never offer them for that complication.
+DECOY_EXCLUDE: dict = {
+    "hemorrhage": ("cricothyroidotomy", "diuretic", "epinephrine", "intubate"),
+    "infection": ("cricothyroidotomy", "intubate", "diuretic", "epinephrine"),
+    "cardiac_arrhythmia": ("epinephrine", "cricothyroidotomy", "diuretic"),
+    "thrombosis": ("cricothyroidotomy", "epinephrine"),
+    "nerve_injury": ("cricothyroidotomy", "epinephrine", "diuretic", "intubate"),
+    "fluid_overload": ("cricothyroidotomy", "epinephrine"),
+}
+
+
 class DecisionEngine:
     def __init__(self, rng: DeterministicRNG, procedure: dict):
         self.rng = rng
@@ -438,6 +451,8 @@ class DecisionEngine:
             archetype_buckets = ARCHETYPE_PHASE_BUCKETS[a]
             for iv in ARCHETYPE_INTERVENTIONS[a]:
                 if comp in iv["treats"] or iv["id"] in seen:
+                    continue
+                if iv["id"] in DECOY_EXCLUDE.get(comp, ()):
                     continue
                 # Option-level phase filter: an option is offerable when its own
                 # bucket list (override ?? archetype) includes the current bucket.
@@ -643,34 +658,27 @@ def _format_complication_cause(comp: str, vitals: dict) -> str:
     temp = v.get("temperature", 0)
     rr = v.get("respiratory_rate", 0)
 
-    def fmt_val(value, prec):
-        return f"{value:.{prec}f}" if prec else f"{value:.0f}"
-
-    def fell(value, thresh, unit, label, prec=0):
+    # The monitor keeps moving after this text is written, so it never quotes
+    # a live number — only the direction and the threshold the monitor will show.
+    def fell(value, thresh, unit, label):
         if value < thresh:
-            return f"{label} has fallen to {fmt_val(value, prec)}{unit} — below the {thresh:g}{unit} threshold"
-        if value > thresh * 1.2:
-            return f"{label} is still {fmt_val(value, prec)}{unit} but will fall as this progresses"
-        return f"{label} is {fmt_val(value, prec)}{unit} and dropping toward the {thresh:g}{unit} threshold"
+            return f"{label} is below {thresh:g}{unit} and still falling — watch the monitor"
+        return f"{label} is falling — expect it to cross {thresh:g}{unit} without treatment"
 
-    def rose(value, thresh, unit, label, prec=0):
+    def rose(value, thresh, unit, label):
         if value > thresh:
-            return f"{label} has climbed to {fmt_val(value, prec)}{unit} — above the {thresh:g}{unit} threshold"
-        if value < thresh * 0.8:
-            return f"{label} is {fmt_val(value, prec)}{unit} for now and will climb as this progresses"
-        return f"{label} is {fmt_val(value, prec)}{unit} and climbing toward the {thresh:g}{unit} threshold"
+            return f"{label} is above {thresh:g}{unit} and still climbing — watch the monitor"
+        return f"{label} is climbing — expect it to pass {thresh:g}{unit} without treatment"
 
     causes = {
         "hypoxia":            f"Oxygen delivery is failing — {fell(spo2, 93.0, '%', 'SpO₂')}",
-        "hemorrhage":         (f"Hypovolemic shock is developing — {fell(bp, 88.0, ' mmHg', 'systolic BP')}" if bp < 110
-                               else f"Active bleeding — {fell(bp, 88.0, ' mmHg', 'systolic BP')}"),
-        "infection":          f"Systemic inflammation is spreading — {rose(temp, 38.3, '°C', 'temperature', 1)}",
-        "cardiac_arrhythmia": (f"Unstable tachyarrhythmia — {rose(hr, 135.0, ' bpm', 'heart rate')}" if hr >= 110
-                               else f"New rhythm disturbance on the monitor — {rose(hr, 135.0, ' bpm', 'heart rate')}"),
-        "thrombosis":         f"Possible thromboembolism — {rose(rr, 26.0, '/min', 'respiratory rate')}",
-        "fluid_overload":     f"Volume overload — {fell(spo2, 93.0, '%', 'SpO₂')} with tachycardia (HR {hr:.0f} bpm)",
-        "anaphylaxis":        f"Anaphylactic reaction — airway and perfusion compromised (BP {bp:.0f} mmHg, SpO₂ {spo2:.0f}%)",
-        "nerve_injury":       f"Peripheral nerve injury — motor and sensory function at risk",
+        "hemorrhage":         f"Hypovolemic shock is developing — {fell(bp, 88.0, ' mmHg', 'systolic BP')}, heart rate rising",
+        "infection":          f"Systemic inflammation is spreading — {rose(temp, 38.3, '°C', 'temperature')}",
+        "cardiac_arrhythmia": f"New rhythm disturbance on the monitor — {rose(hr, 135.0, ' bpm', 'heart rate')}, blood pressure at risk",
+        "thrombosis":         f"Possible thromboembolism — {rose(rr, 26.0, '/min', 'respiratory rate')}, SpO₂ drifting down",
+        "fluid_overload":     f"Volume overload — {fell(spo2, 93.0, '%', 'SpO₂')}, with tachycardia and rising work of breathing",
+        "anaphylaxis":        "Anaphylactic reaction — blood pressure and SpO₂ are falling, airway at risk",
+        "nerve_injury":       "Peripheral nerve injury — motor and sensory function at risk",
     }
     return causes.get(comp, f"Physiologic derangement: {comp.replace('_', ' ')}")
 
