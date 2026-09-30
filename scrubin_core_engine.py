@@ -660,15 +660,13 @@ def _format_complication_cause(comp: str, vitals: dict) -> str:
 
     # The monitor keeps moving after this text is written, so it never quotes
     # a live number — only the direction and the threshold the monitor will show.
+    # The monitor keeps moving after this text is written, so it never states
+    # where a vital is now — only its direction and the threshold to watch.
     def fell(value, thresh, unit, label):
-        if value < thresh:
-            return f"{label} is below {thresh:g}{unit} and still falling — watch the monitor"
-        return f"{label} is falling — expect it to cross {thresh:g}{unit} without treatment"
+        return f"{label} falling (danger threshold {thresh:g}{unit})"
 
     def rose(value, thresh, unit, label):
-        if value > thresh:
-            return f"{label} is above {thresh:g}{unit} and still climbing — watch the monitor"
-        return f"{label} is climbing — expect it to pass {thresh:g}{unit} without treatment"
+        return f"{label} rising (danger threshold {thresh:g}{unit})"
 
     causes = {
         "hypoxia":            f"Oxygen delivery is failing — {fell(spo2, 93.0, '%', 'SpO₂')}",
@@ -1093,6 +1091,9 @@ class SimulationOrchestrator:
         })
 
     def trigger_complication(self, complication_id: str, step_index: Optional[int] = None, step_label: Optional[str] = None, step_kind: Optional[str] = None) -> dict:
+        # Each response carries only the events it produced — the client keeps
+        # the cumulative log, so stale lines here would be appended twice.
+        self.events = []
         if step_index is not None:
             self.record_stock_step(step_index, False, step_label, step_kind)
         self.mode = "branched"
@@ -1241,6 +1242,7 @@ class SimulationOrchestrator:
     def tick_vitals_only(self) -> dict:
         if self.completed:
             return self.get_state()
+        self.events = []
             
         vitals_before = self.vitals_engine.snapshot()
         
@@ -1268,6 +1270,7 @@ class SimulationOrchestrator:
         if not self.pending_decision_state or self.pending_decision_state["resolved"]:
             raise RuntimeError("No pending decision to resolve")
 
+        self.events = []
         vitals_before = self.vitals_engine.snapshot()
         # Capture the complication source before resolution clears it, so the
         # client can tell a spontaneous crisis (no step skipped) from a mistake.

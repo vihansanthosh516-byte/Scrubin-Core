@@ -87,7 +87,7 @@ DECISION_ARCHETYPES = [
 ]
 
 ARCHETYPE_COMPLICATION_MAP: Dict[str, List[str]] = {
-    "AIRWAY_STABILITY":     ["hypoxia", "anaphylaxis"],
+    "AIRWAY_STABILITY":     ["hypoxia"],
     "HEMODYNAMIC_CONTROL":  ["hemorrhage", "cardiac_arrhythmia", "fluid_overload", "anaphylaxis"],
     "BLEEDING_CONTROL":     ["hemorrhage"],
     "INFECTION_MANAGEMENT": ["infection"],
@@ -95,9 +95,9 @@ ARCHETYPE_COMPLICATION_MAP: Dict[str, List[str]] = {
     # A crisis only draws an option set whose treating options a surgeon would
     # recognize as treatment: bleeding gets volume and source control, never a
     # set where "proceed" or "abort" is the only answer.
-    "DIAGNOSTIC_STEP":      ["thrombosis", "nerve_injury"],
+    "DIAGNOSTIC_STEP":      ["nerve_injury"],
     "SURGICAL_DECISION":    ["nerve_injury"],
-    "POST_OP_MONITORING":   ["infection", "thrombosis", "fluid_overload"],
+    "POST_OP_MONITORING":   ["thrombosis"],
 }
 
 # ── Procedure-phase awareness ──
@@ -206,7 +206,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "intubate",
             "label": "Intubate & secure airway",
-            "treats": ["hypoxia", "anaphylaxis"],
+            "treats": ["hypoxia"],
             "vitalsEffect": {"spo2": +8, "heart_rate": -3, "respiratory_rate": -4},
             "riskIfWrong": {"spo2": -5, "heart_rate": +10},
             "correctFeedback": "Airway secured successfully. SpO2 improving.",
@@ -224,7 +224,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "cricothyroidotomy",
             "label": "Emergency cricothyroidotomy",
-            "treats": ["anaphylaxis", "hypoxia"],
+            "treats": ["hypoxia"],
             "vitalsEffect": {"spo2": +12, "heart_rate": -5},
             "riskIfWrong": {"spo2": -8, "heart_rate": +15},
             "correctFeedback": "Surgical airway established. Patient stabilized.",
@@ -414,7 +414,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "imaging",
             "label": "Order imaging (CT/X-ray)",
-            "treats": ["thrombosis", "nerve_injury"],
+            "treats": ["nerve_injury"],
             "vitalsEffect": {},
             "riskIfWrong": {"heart_rate": +3},
             "correctFeedback": "Imaging reveals the key finding. Diagnosis clarified.",
@@ -423,7 +423,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "labs",
             "label": "Draw stat labs (ABG, CBC, CMP)",
-            "treats": ["infection", "thrombosis"],
+            "treats": [],
             "vitalsEffect": {},
             "riskIfWrong": {"heart_rate": +2},
             "correctFeedback": "Lab results confirm the clinical suspicion. Appropriate treatment can begin.",
@@ -490,7 +490,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "vitals_check",
             "label": "Close vitals monitoring (q15min)",
-            "treats": ["infection", "fluid_overload"],
+            "treats": [],
             "vitalsEffect": {},
             "riskIfWrong": {"heart_rate": +5},
             "correctFeedback": "Close monitoring detected the change early. Intervention initiated promptly.",
@@ -499,7 +499,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "doppler",
             "label": "Doppler ultrasound for DVT",
-            "treats": ["thrombosis"],
+            "treats": [],
             "vitalsEffect": {},
             "riskIfWrong": {"heart_rate": +3},
             "correctFeedback": "Doppler caught the clot early. Anticoagulation started.",
@@ -517,7 +517,7 @@ ARCHETYPE_INTERVENTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "serial_labs",
             "label": "Serial labs (q6h Hgb, lactate)",
-            "treats": ["infection", "fluid_overload", "hemorrhage"],
+            "treats": [],
             "vitalsEffect": {},
             "riskIfWrong": {"temperature": +0.2},
             "correctFeedback": "Serial labs trending in the right direction. Continue current management.",
