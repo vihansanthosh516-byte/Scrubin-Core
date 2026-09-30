@@ -351,6 +351,9 @@ class ComplicationEngine:
 # Decision engine
 # ─────────────────────────────────────────────────────────────────────────────
 
+SEPSIS_ABX = {"antibiotics_iv"}
+SEPSIS_SOURCE = {"wound_irrigation", "source_control", "exploration"}
+
 # Decoys that read as absurd for a complication (a surgical airway for
 # bleeding, IM anaphylaxis-dose epinephrine for an arrhythmia) teach nothing and
 # look like errors in the curriculum — never offer them for that complication.
@@ -403,7 +406,8 @@ class DecisionEngine:
         # archetype's low-risk options are always offered and its high-risk
         # options are sampled.
         if active_complication:
-            always = [o for o in options if active_complication in o["correctForComplications"]]
+            always = [o for o in options if active_complication in o["correctForComplications"]
+                      and not (active_complication == "infection" and o["id"] in getattr(self, "exclude_ids", set()))]
             exclude = {o["id"] for o in always}
             primary, secondary = self._decoy_pool(archetype, active_complication, bucket, exclude)
             chosen = self._sample_options(always, primary, secondary)
@@ -472,6 +476,8 @@ class DecisionEngine:
                 })
             return out
 
+        if comp == "infection":
+            seen |= set(getattr(self, "exclude_ids", set()))
         primary = build(archetype, comp, bucket, seen)
         for a in ARCHETYPE_PHASE_BUCKETS:
             if a != archetype:
@@ -993,6 +999,7 @@ class SimulationOrchestrator:
         self.complication_source = "spontaneous"
         self.complication_cause = cause
         self.complication_history.append({
+            "seq": self._next_seq(),
             "complication": comp,
             "source": "spontaneous",
             "cause": cause,
@@ -1077,12 +1084,19 @@ class SimulationOrchestrator:
         self.max_score += 10
         return self._build_result(None, vitals_before, vitals_after)
 
+    def _next_seq(self) -> int:
+        # Order of events within a tick — several steps and a whole rescue can
+        # share one tick, so tick alone cannot order the debrief timeline.
+        self._seq = getattr(self, "_seq", 0) + 1
+        return self._seq
+
     def record_stock_step(self, index: int, correct: bool, label: Optional[str] = None, kind: Optional[str] = None) -> None:
         """Record a reported stock-step outcome so the debrief evaluation can
         see the whole case (the engine never observes stock steps otherwise —
         the client owns them and only reports correct steps via /next and wrong
         steps via /complicate)."""
         self.stock_history.append({
+            "seq": self._next_seq(),
             "index": int(index),
             "label": label or f"Step {int(index) + 1}",
             "kind": kind,
@@ -1094,6 +1108,8 @@ class SimulationOrchestrator:
         # Each response carries only the events it produced — the client keeps
         # the cumulative log, so stale lines here would be appended twice.
         self.events = []
+        self._sepsis_done = set()
+        self.decision_engine.exclude_ids = set()
         if step_index is not None:
             self.record_stock_step(step_index, False, step_label, step_kind)
         self.mode = "branched"
@@ -1107,6 +1123,7 @@ class SimulationOrchestrator:
             self.death_reason = "Irreversible Decompensatory Shock (Physiological reserve exhausted)"
             self.events.append("🔴 CRITICAL FAILURE: Irreversible Decompensatory Shock (Physiological reserve exhausted).")
             self.complication_history.append({
+            "seq": self._next_seq(),
                 "complication": complication_id,
                 "source": "mistake",
                 "cause": self.death_reason,
@@ -1121,6 +1138,7 @@ class SimulationOrchestrator:
         self.complication_source = "mistake"
         self.complication_cause = _format_complication_cause(complication_id, self.vitals_engine.snapshot())
         self.complication_history.append({
+            "seq": self._next_seq(),
             "complication": complication_id,
             "source": "mistake",
             "cause": self.complication_cause,
@@ -1162,6 +1180,7 @@ class SimulationOrchestrator:
         self.complication_source = "spontaneous"
         self.complication_cause = cause
         self.complication_history.append({
+            "seq": self._next_seq(),
             "complication": complication_id,
             "source": "spontaneous",
             "cause": cause,
@@ -1281,7 +1300,26 @@ class SimulationOrchestrator:
         if eval_["wasCorrect"]:
             self.vitals_engine.apply_intervention(eval_["vitalsEffect"], 3, self._tick)
             self.events.append(eval_["feedback"])
-            if self.active_complication:
+            # Sepsis needs both antibiotics and source control (Surviving Sepsis
+            # Campaign): the first half keeps the crisis open and the next offer
+            # drops the half already given.
+            partial = False
+            if self.active_complication == "infection":
+                done = getattr(self, "_sepsis_done", set())
+                done.add("abx" if option_id == "antibiotics_iv" else "source")
+                self._sepsis_done = done
+                if len(done) < 2:
+                    partial = True
+                    self.decision_engine.exclude_ids = SEPSIS_ABX if "abx" in done else SEPSIS_SOURCE
+                    self.events.append(
+                        "✅ Antibiotics running — the infected source still needs control."
+                        if "abx" in done else
+                        "✅ Source controlled — IV antibiotics are still needed."
+                    )
+            if not partial:
+                self._sepsis_done = set()
+                self.decision_engine.exclude_ids = set()
+            if self.active_complication and not partial:
                 if self.physiological_reserve < 30.0 and self.active_complication in SHOCK_COMPLICATIONS:
                     # Fix 2: no infinite phantom loop. Reserve below 30% with an
                     # active complication is the point of no return — the engine
@@ -1313,6 +1351,7 @@ class SimulationOrchestrator:
                         if not entry.get("resolved"):
                             entry["resolved"] = True
                             entry["resolvedTick"] = self._tick
+                            entry["resolvedSeq"] = self._next_seq()
                     self.events.append("Complication resolved")
                     # Fix 1: renewable reserve — reward clean management. Refund
                     # up to 15% reserve for a first-try rescue, minus 5% per
@@ -1338,6 +1377,7 @@ class SimulationOrchestrator:
                 self.vitals_engine.apply_complication(eval_["complicationTriggered"], 0.7)
                 self.events.append(f"Wrong decision triggered: {eval_['complicationTriggered'].replace('_', ' ')}")
                 self.complication_history.append({
+            "seq": self._next_seq(),
                     "complication": eval_["complicationTriggered"],
                     "source": "mistake",
                     "cause": _format_complication_cause(eval_["complicationTriggered"], self.vitals_engine.snapshot()),
@@ -1362,6 +1402,7 @@ class SimulationOrchestrator:
             "feedback": eval_["feedback"],
             "scoreDelta": eval_["scoreDelta"],
         }
+        result["seq"] = self._next_seq()
         self.decision_history.append(result)
         self.pending_decision = None
         self.pending_decision_state = {**self.pending_decision_state, "resolved": True}
@@ -1555,24 +1596,24 @@ class SimulationOrchestrator:
         timeline: list[dict] = []
         for s in stock:
             timeline.append({
-                "tick": s.get("tick"),
+                "tick": s.get("tick"), "seq": s.get("seq", 0),
                 "description": f"✅ Completed surgical step — {_step_label(s)}" if s["correct"]
                 else f"❌ Wrong surgical step — {_wrong_step(s)}",
             })
         for c in comps:
             timeline.append({
-                "tick": c.get("tick"),
+                "tick": c.get("tick"), "seq": c.get("seq", 0),
                 "description": f"⚠️ {c['complication'].replace('_', ' ').upper()} developed ({c['source']})",
             })
             if c.get("resolved"):
                 timeline.append({
-                    "tick": c.get("resolvedTick"),
+                    "tick": c.get("resolvedTick"), "seq": c.get("resolvedSeq", 0),
                     "description": "✅ Complication resolved",
                 })
         for d in decisions:
             verdict = "✅ Correctly managed" if d["wasCorrect"] else "❌ Wrong decision"
             timeline.append({
-                "tick": d.get("tick"),
+                "tick": d.get("tick"), "seq": d.get("seq", 0),
                 "description": f"{verdict}: {d['feedback']}",
             })
         if is_deceased:
@@ -1580,7 +1621,9 @@ class SimulationOrchestrator:
                 "tick": self._tick,
                 "description": f"🔴 Patient died — {self.death_reason or 'physiologic collapse'}",
             })
-        timeline.sort(key=lambda e: (e["tick"] if e["tick"] is not None else -1))
+        timeline.sort(key=lambda e: (e["tick"] if e["tick"] is not None else -1, e.get("seq") or 0))
+        for e in timeline:
+            e.pop("seq", None)
         timeline = timeline[-60:]
 
         # ── Critical events ──
