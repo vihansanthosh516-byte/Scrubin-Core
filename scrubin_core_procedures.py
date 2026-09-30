@@ -758,7 +758,7 @@ ALL_PROCEDURES: List[Dict[str, Any]] = [
         "patient": {
             "name": "Maria L.", "age": 31, "sex": "Female", "weight": "92 kg", "bloodType": "A+",
             "admission": "39 weeks gestation, failure to progress, non-reassuring fetal tracing",
-            "mood": "Exhausted but determined", "comorbidities": [],
+            "mood": "Exhausted but determined", "comorbidities": ["Mild asthma"],
             "baselineVitals": {"spo2": 98, "heart_rate": 88, "bp_systolic": 90, "bp_diastolic": 60, "temperature": 37.0, "respiratory_rate": 18},
         },
         "initialState": {"vitals_override": {"heart_rate": 88, "bp_systolic": 90, "respiratory_rate": 18}, "riskProfile": RISK_PROFILES["moderate"]},
@@ -1383,7 +1383,7 @@ ALL_PROCEDURES: List[Dict[str, Any]] = [
         "description": "Microsurgical discectomy for lumbar disc herniation. Nerve root protection and dural preservation.",
         "patient": {
             "name": "Karen S.", "age": 42, "sex": "Female", "weight": "70 kg", "bloodType": "A+",
-            "admission": "L5-S1 disc herniation with progressive radiculopathy, failed 6 weeks of conservative care",
+            "admission": "L4-L5 disc herniation with progressive L5 radiculopathy, failed 6 weeks of conservative care",
             "mood": "In pain", "comorbidities": [],
             "baselineVitals": {"spo2": 98, "heart_rate": 78, "bp_systolic": 93, "bp_diastolic": 63, "temperature": 37.0, "respiratory_rate": 16},
         },
