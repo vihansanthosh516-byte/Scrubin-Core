@@ -621,7 +621,7 @@ POST_RESOLUTION_STABILIZATION_TICKS = 8
 # treatment is findable without giving away the option.
 RESCUE_HINTS = {
     "hemorrhage": "Bleeding needs source control and volume, not observation.",
-    "hypoxia": "Secure oxygenation first: think airway and oxygen before anything else.",
+    "hypoxia": "Secure the airway first — oxygen cannot help until air can get in.",
     "cardiac_arrhythmia": "An unstable rhythm is treated electrically, not by waiting.",
     "anaphylaxis": "This is anaphylaxis: the first-line drug has to go in now.",
     "infection": "Sepsis needs cultures, antibiotics, and control of the source.",
